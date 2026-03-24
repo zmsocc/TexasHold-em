@@ -11,46 +11,51 @@ import (
 )
 
 type WebGUIGame struct {
-	game             *Game
-	mu               sync.Mutex
-	actionChan       chan ActionData
-	firstGame        bool
-	currentPhase     string
+	game              *Game
+	mu                sync.Mutex
+	actionChan        chan ActionData
+	firstGame         bool
+	currentPhase      string
 	currentPlayerName string
-	waitingForInput  bool
-	canCheck         bool
-	canCall          bool
-	canRaise         bool
-	minRaise         int
-	maxRaise         int
-	callAmount       int
-	message          string
-	gameOver         bool
-	winnerText       string
-	askContinue      bool
-	askShuffle       bool
-	showdownCards    []string
+	waitingForInput   bool
+	canCheck          bool
+	canCall           bool
+	canRaise          bool
+	minRaise          int
+	maxRaise          int
+	callAmount        int
+	message           string
+	gameOver          bool
+	winnerText        string
+	askContinue       bool
+	askShuffle        bool
+	showdownCards     []string
+	winnerHandRank    string
+	winnerName        string
+	currentUser       *User
 }
 
 type GameState struct {
-	Players        []PlayerState `json:"players"`
-	CommunityCards []string      `json:"communityCards"`
-	Pot            int           `json:"pot"`
-	Phase          string        `json:"phase"`
-	CurrentPlayer  string        `json:"currentPlayer"`
-	Message        string        `json:"message"`
-	GameOver       bool          `json:"gameOver"`
-	WinnerText     string        `json:"winnerText"`
-	CanCheck       bool          `json:"canCheck"`
-	CanCall        bool          `json:"canCall"`
-	CanRaise       bool          `json:"canRaise"`
-	MinRaise       int           `json:"minRaise"`
-	MaxRaise       int           `json:"maxRaise"`
-	CallAmount     int           `json:"callAmount"`
-	WaitingForInput bool         `json:"waitingForInput"`
-	AskContinue    bool          `json:"askContinue"`
-	AskShuffle     bool          `json:"askShuffle"`
-	ShowdownCards  []string      `json:"showdownCards"`
+	Players         []PlayerState `json:"players"`
+	CommunityCards  []string      `json:"communityCards"`
+	Pot             int           `json:"pot"`
+	Phase           string        `json:"phase"`
+	CurrentPlayer   string        `json:"currentPlayer"`
+	Message         string        `json:"message"`
+	GameOver        bool          `json:"gameOver"`
+	WinnerText      string        `json:"winnerText"`
+	CanCheck        bool          `json:"canCheck"`
+	CanCall         bool          `json:"canCall"`
+	CanRaise        bool          `json:"canRaise"`
+	MinRaise        int           `json:"minRaise"`
+	MaxRaise        int           `json:"maxRaise"`
+	CallAmount      int           `json:"callAmount"`
+	WaitingForInput bool          `json:"waitingForInput"`
+	AskContinue     bool          `json:"askContinue"`
+	AskShuffle      bool          `json:"askShuffle"`
+	ShowdownCards   []string      `json:"showdownCards"`
+	WinnerHandRank  string        `json:"winnerHandRank"`
+	WinnerName      string        `json:"winnerName"`
 }
 
 type ActionData struct {
@@ -59,24 +64,84 @@ type ActionData struct {
 }
 
 type PlayerState struct {
-	ID        int      `json:"id"`
-	Name      string   `json:"name"`
-	Chips     int      `json:"chips"`
-	Cards     []string `json:"cards"`
-	Bet       int      `json:"bet"`
-	Folded    bool     `json:"folded"`
-	AllIn     bool     `json:"allIn"`
-	IsHuman   bool     `json:"isHuman"`
-	IsCurrent bool     `json:"isCurrent"`
-	IsDealer  bool     `json:"isDealer"`
-	IsSmallBlind bool  `json:"isSmallBlind"`
-	IsBigBlind bool    `json:"isBigBlind"`
+	ID           int      `json:"id"`
+	Name         string   `json:"name"`
+	Chips        int      `json:"chips"`
+	Cards        []string `json:"cards"`
+	Bet          int      `json:"bet"`
+	Folded       bool     `json:"folded"`
+	AllIn        bool     `json:"allIn"`
+	IsHuman      bool     `json:"isHuman"`
+	IsCurrent    bool     `json:"isCurrent"`
+	IsDealer     bool     `json:"isDealer"`
+	IsSmallBlind bool     `json:"isSmallBlind"`
+	IsBigBlind   bool     `json:"isBigBlind"`
 }
 
 func NewWebGUIGame() *WebGUIGame {
 	return &WebGUIGame{
 		actionChan: make(chan ActionData, 1),
 		firstGame:  true,
+	}
+}
+
+func getRankOrder(rank Rank) int {
+	switch rank {
+	case Ace:
+		return 14
+	case King:
+		return 13
+	case Queen:
+		return 12
+	case Jack:
+		return 11
+	case Ten:
+		return 10
+	case Nine:
+		return 9
+	case Eight:
+		return 8
+	case Seven:
+		return 7
+	case Six:
+		return 6
+	case Five:
+		return 5
+	case Four:
+		return 4
+	case Three:
+		return 3
+	case Two:
+		return 2
+	default:
+		return 0
+	}
+}
+
+func getHandRankName(rank HandRank) string {
+	switch rank {
+	case RoyalFlush:
+		return "皇家同花顺"
+	case StraightFlush:
+		return "同花顺"
+	case FourOfKind:
+		return "四条"
+	case FullHouse:
+		return "满堂红"
+	case Flush:
+		return "同花"
+	case Straight:
+		return "顺子"
+	case ThreeOfKind:
+		return "三条"
+	case TwoPair:
+		return "两对"
+	case OnePair:
+		return "一对"
+	case HighCard:
+		return "高牌"
+	default:
+		return ""
 	}
 }
 
@@ -100,12 +165,19 @@ func (g *WebGUIGame) getGameState() *GameState {
 		AskContinue:     g.askContinue,
 		AskShuffle:      g.askShuffle,
 		ShowdownCards:   g.showdownCards,
+		WinnerHandRank:  g.winnerHandRank,
+		WinnerName:      g.winnerName,
 	}
 
 	numPlayers := len(g.game.Players)
 	dealerPos := g.game.ButtonPos
 	sbPos := (dealerPos + 1) % numPlayers
 	bbPos := (dealerPos + 2) % numPlayers
+
+	humanPlayerName := "你"
+	if g.currentUser != nil {
+		humanPlayerName = g.currentUser.Nickname
+	}
 
 	for i, p := range g.game.Players {
 		ps := PlayerState{
@@ -115,19 +187,19 @@ func (g *WebGUIGame) getGameState() *GameState {
 			Bet:          p.Bet,
 			Folded:       p.Folded,
 			AllIn:        p.AllIn,
-			IsHuman:      p.Name == "你",
+			IsHuman:      p.Name == humanPlayerName,
 			IsCurrent:    p.Name == g.currentPlayerName,
 			IsDealer:     i == dealerPos,
 			IsSmallBlind: i == sbPos,
 			IsBigBlind:   i == bbPos,
 			Cards:        make([]string, 0, 2),
 		}
-		
-		if p.Name == "你" {
+
+		if p.Name == humanPlayerName {
 			for _, c := range p.HoleCards {
 				ps.Cards = append(ps.Cards, c.ImageFileName())
 			}
-		} else if (!p.Folded && g.currentPhase == "摊牌") {
+		} else if !p.Folded && g.currentPhase == "摊牌" {
 			for _, c := range p.HoleCards {
 				ps.Cards = append(ps.Cards, c.ImageFileName())
 			}
@@ -137,23 +209,33 @@ func (g *WebGUIGame) getGameState() *GameState {
 		state.Players = append(state.Players, ps)
 	}
 
-	if len(g.showdownCards) > 0 {
-		state.CommunityCards = g.showdownCards
-	} else {
-		for _, c := range g.game.CommunityCards {
-			state.CommunityCards = append(state.CommunityCards, c.ImageFileName())
-		}
+	for _, c := range g.game.CommunityCards {
+		state.CommunityCards = append(state.CommunityCards, c.ImageFileName())
+	}
 
-		for len(state.CommunityCards) < 5 {
-			state.CommunityCards = append(state.CommunityCards, "bm.png")
-		}
+	for len(state.CommunityCards) < 5 {
+		state.CommunityCards = append(state.CommunityCards, "bm.png")
 	}
 
 	return state
 }
 
 func (g *WebGUIGame) Run() {
-	http.HandleFunc("/", g.handleIndex)
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		if g.checkAuth(r) == nil {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		g.handleIndex(w, r)
+	})
+	http.HandleFunc("/login", g.handleLoginPage)
+	http.HandleFunc("/register", g.handleRegisterPage)
+	http.HandleFunc("/api/login", g.handleLoginAPI)
+	http.HandleFunc("/api/register", g.handleRegisterAPI)
 	http.HandleFunc("/state", g.handleState)
 	http.HandleFunc("/action", g.handleAction)
 	http.Handle("/puke-img/", http.StripPrefix("/puke-img/", http.FileServer(http.Dir("puke-img"))))
@@ -174,6 +256,12 @@ func (g *WebGUIGame) Run() {
 }
 
 func (g *WebGUIGame) handleIndex(w http.ResponseWriter, r *http.Request) {
+	user := g.checkAuth(r)
+	if user != nil {
+		g.mu.Lock()
+		g.currentUser = user
+		g.mu.Unlock()
+	}
 	tmpl, err := template.ParseFiles("templates/index.html")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -183,6 +271,13 @@ func (g *WebGUIGame) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *WebGUIGame) handleState(w http.ResponseWriter, r *http.Request) {
+	user := g.checkAuth(r)
+	if user != nil {
+		g.mu.Lock()
+		g.currentUser = user
+		g.mu.Unlock()
+	}
+
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -203,6 +298,13 @@ func (g *WebGUIGame) handleAction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
+	}
+
+	user := g.checkAuth(r)
+	if user != nil {
+		g.mu.Lock()
+		g.currentUser = user
+		g.mu.Unlock()
 	}
 
 	var actionReq struct {
@@ -231,7 +333,11 @@ func (g *WebGUIGame) handleAction(w http.ResponseWriter, r *http.Request) {
 		if g.game == nil {
 			rand.Seed(time.Now().UnixNano())
 			numPlayers := rand.Intn(9) + 2
-			g.game = NewGame(numPlayers, 100)
+			humanName := ""
+			if g.currentUser != nil {
+				humanName = g.currentUser.Nickname
+			}
+			g.game = NewGame(numPlayers, 100, humanName)
 			if g.firstGame {
 				g.shufflePlayers()
 				g.firstGame = false
@@ -280,9 +386,22 @@ func (g *WebGUIGame) shufflePlayers() {
 	}
 }
 
+func (g *WebGUIGame) shouldSkipBettingRounds() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	activePlayers := g.game.getActivePlayers()
+	for _, p := range activePlayers {
+		if !p.AllIn {
+			return false
+		}
+	}
+	return len(activePlayers) > 1
+}
+
 func (g *WebGUIGame) playHand() {
 	g.mu.Lock()
-	
+
 	g.game.NewHand()
 	g.currentPhase = "翻牌前"
 	g.message = "游戏开始！"
@@ -291,6 +410,8 @@ func (g *WebGUIGame) playHand() {
 	g.askContinue = false
 	g.askShuffle = false
 	g.showdownCards = nil
+	g.winnerHandRank = ""
+	g.winnerName = ""
 
 	g.game.DealHoleCards()
 	g.currentPhase = "翻牌前"
@@ -304,7 +425,7 @@ func (g *WebGUIGame) playHand() {
 	g.mu.Unlock()
 
 	g.runBettingRound("翻牌前")
-	
+
 	g.mu.Lock()
 	if g.game.GameOver() {
 		g.mu.Unlock()
@@ -313,45 +434,74 @@ func (g *WebGUIGame) playHand() {
 	}
 	g.mu.Unlock()
 
-	g.mu.Lock()
-	g.game.DealFlop()
-	g.currentPhase = "翻牌圈"
-	g.message = ""
-	g.mu.Unlock()
-
-	g.runBettingRound("翻牌圈")
-	
-	g.mu.Lock()
-	if g.game.GameOver() {
+	if g.shouldSkipBettingRounds() {
+		g.mu.Lock()
+		g.message = "所有玩家全下，直接发牌至河牌！"
 		g.mu.Unlock()
-		g.showdown()
-		return
-	}
-	g.mu.Unlock()
-
-	g.mu.Lock()
-	g.game.DealTurn()
-	g.currentPhase = "转牌圈"
-	g.message = ""
-	g.mu.Unlock()
-
-	g.runBettingRound("转牌圈")
-	
-	g.mu.Lock()
-	if g.game.GameOver() {
+		time.Sleep(1000 * time.Millisecond)
+	} else {
+		g.mu.Lock()
+		g.game.DealFlop()
+		g.currentPhase = "翻牌圈"
+		g.message = ""
 		g.mu.Unlock()
-		g.showdown()
-		return
+
+		g.runBettingRound("翻牌圈")
+
+		g.mu.Lock()
+		if g.game.GameOver() {
+			g.mu.Unlock()
+			g.showdown()
+			return
+		}
+		g.mu.Unlock()
+
+		if g.shouldSkipBettingRounds() {
+			g.mu.Lock()
+			g.message = "所有玩家全下，直接发牌至河牌！"
+			g.mu.Unlock()
+			time.Sleep(1000 * time.Millisecond)
+		} else {
+			g.mu.Lock()
+			g.game.DealTurn()
+			g.currentPhase = "转牌圈"
+			g.message = ""
+			g.mu.Unlock()
+
+			g.runBettingRound("转牌圈")
+
+			g.mu.Lock()
+			if g.game.GameOver() {
+				g.mu.Unlock()
+				g.showdown()
+				return
+			}
+			g.mu.Unlock()
+
+			if !g.shouldSkipBettingRounds() {
+				g.mu.Lock()
+				g.game.DealRiver()
+				g.currentPhase = "河牌圈"
+				g.message = ""
+				g.mu.Unlock()
+
+				g.runBettingRound("河牌圈")
+			}
+		}
 	}
-	g.mu.Unlock()
 
 	g.mu.Lock()
-	g.game.DealRiver()
+	if len(g.game.CommunityCards) < 3 {
+		g.game.DealFlop()
+	}
+	if len(g.game.CommunityCards) < 4 {
+		g.game.DealTurn()
+	}
+	if len(g.game.CommunityCards) < 5 {
+		g.game.DealRiver()
+	}
 	g.currentPhase = "河牌圈"
-	g.message = ""
 	g.mu.Unlock()
-
-	g.runBettingRound("河牌圈")
 
 	g.showdown()
 }
@@ -372,6 +522,8 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 	lastRaisePos := -1
 	currentPos := startPos % len(g.game.Players)
 	betCount := 0
+	firstRoundComplete := false
+	checkCount := 0
 	g.mu.Unlock()
 
 	for {
@@ -391,11 +543,16 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 
 		g.currentPhase = phase
 		g.currentPlayerName = player.Name
-		
+
 		var action Action
 		var raiseAmount int
 
-		if player.Name == "你" {
+		humanPlayerName := "你"
+		if g.currentUser != nil {
+			humanPlayerName = g.currentUser.Nickname
+		}
+
+		if player.Name == humanPlayerName {
 			g.message = "轮到你了！"
 			g.waitingForInput = true
 			g.canCheck = g.game.CurrentBet == player.Bet
@@ -438,12 +595,36 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 		if action == Raise || action == AllIn {
 			lastRaisePos = currentPos
 			betCount++
+			checkCount = 0
+			firstRoundComplete = true
+		} else if action == Check {
+			checkCount++
 		} else if action == Fold {
 			activePlayers = g.game.getActivePlayers()
 			if len(activePlayers) <= 1 {
 				g.mu.Unlock()
 				break
 			}
+		} else if action == Call {
+			firstRoundComplete = true
+		}
+
+		activePlayers = g.game.getActivePlayers()
+		activeNonAllInCount := 0
+		for _, p := range activePlayers {
+			if !p.AllIn {
+				activeNonAllInCount++
+			}
+		}
+
+		if activeNonAllInCount <= 1 {
+			g.mu.Unlock()
+			break
+		}
+
+		if firstRoundComplete && lastRaisePos == -1 && checkCount >= activeNonAllInCount {
+			g.mu.Unlock()
+			break
 		}
 
 		g.mu.Unlock()
@@ -474,6 +655,14 @@ func (g *WebGUIGame) showdown() {
 		winner := activePlayers[0]
 		winner.Chips += g.game.Pot
 		winnerText = fmt.Sprintf("%s 获胜！赢得 %d 筹码！", winner.Name, g.game.Pot)
+		winners = []*Player{winner}
+		winnerCards = winner.HoleCards
+		allCards := append(winner.HoleCards, g.game.CommunityCards...)
+		if len(allCards) >= 5 {
+			bestHand = EvaluateHand(allCards)
+		} else {
+			bestHand = Hand{Cards: winner.HoleCards, Rank: HighCard}
+		}
 	} else {
 		type playerHand struct {
 			player *Player
@@ -518,15 +707,34 @@ func (g *WebGUIGame) showdown() {
 		winnerText += fmt.Sprintf(" 每人赢得 %d 筹码！(牌型: %v)", winAmount, bestHand.Rank)
 	}
 
+	sortedCards := make([]Card, len(winnerCards))
+	copy(sortedCards, winnerCards)
+	for i := 0; i < len(sortedCards); i++ {
+		for j := i + 1; j < len(sortedCards); j++ {
+			if getRankOrder(sortedCards[i].Rank) < getRankOrder(sortedCards[j].Rank) {
+				sortedCards[i], sortedCards[j] = sortedCards[j], sortedCards[i]
+			}
+		}
+	}
+
 	g.showdownCards = make([]string, 0, 5)
-	for _, c := range winnerCards {
+	for _, c := range sortedCards {
 		g.showdownCards = append(g.showdownCards, c.ImageFileName())
 	}
 
+	g.winnerHandRank = getHandRankName(bestHand.Rank)
 	g.winnerText = winnerText
 	g.gameOver = true
 	g.askContinue = false
 	g.currentPlayerName = ""
+	if len(winners) > 0 {
+		g.winnerName = winners[0].Name
+		for i := 1; i < len(winners); i++ {
+			g.winnerName += "、" + winners[i].Name
+		}
+	} else {
+		g.winnerName = ""
+	}
 
 	g.game.ButtonPos = (g.game.ButtonPos + 1) % len(g.game.Players)
 	g.mu.Unlock()
@@ -538,20 +746,247 @@ func (g *WebGUIGame) showdown() {
 	g.mu.Unlock()
 
 	actionData := <-g.actionChan
-	
+
 	g.mu.Lock()
 	if actionData.Amount == -1 {
 		g.askContinue = false
 		g.askShuffle = true
 		g.gameOver = false
 		g.mu.Unlock()
-		
+
 		actionData = <-g.actionChan
-		
+
 		g.mu.Lock()
 		if actionData.Amount == -2 {
 		}
 		go g.playHand()
 	}
 	g.mu.Unlock()
+}
+
+type User struct {
+	ID       int
+	Nickname string
+	Email    string
+	Password string
+}
+
+var (
+	users      = make(map[string]*User)
+	usersByID  = make(map[int]*User)
+	nextUserID = 1
+	sessions   = make(map[string]*User)
+	sessionMu  sync.Mutex
+)
+
+func (g *WebGUIGame) handleLoginPage(w http.ResponseWriter, r *http.Request) {
+	tmpl, err := template.ParseFiles("templates/login.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tmpl.Execute(w, nil)
+}
+
+func (g *WebGUIGame) handleRegisterPage(w http.ResponseWriter, r *http.Request) {
+	tmpl, err := template.ParseFiles("templates/register.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tmpl.Execute(w, nil)
+}
+
+func (g *WebGUIGame) handleLoginAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "无效的请求",
+		})
+		return
+	}
+
+	var user *User
+	var err error
+
+	if db != nil {
+		user, err = GetUserByNickname(req.Username)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "数据库错误",
+			})
+			return
+		}
+		if user == nil {
+			user, err = GetUserByEmail(req.Username)
+			if err != nil {
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"success": false,
+					"message": "数据库错误",
+				})
+				return
+			}
+		}
+	} else {
+		sessionMu.Lock()
+		defer sessionMu.Unlock()
+
+		if u, ok := users[req.Username]; ok && u.Password == req.Password {
+			user = u
+		} else {
+			for _, u := range users {
+				if u.Email == req.Username && u.Password == req.Password {
+					user = u
+					break
+				}
+			}
+		}
+	}
+
+	if user == nil || user.Password != req.Password {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "账号或密码错误",
+		})
+		return
+	}
+
+	sessionMu.Lock()
+	sessionID := fmt.Sprintf("%d", time.Now().UnixNano())
+	sessions[sessionID] = user
+	sessionMu.Unlock()
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session_id",
+		Value:    sessionID,
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   86400,
+	})
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+	})
+}
+
+func (g *WebGUIGame) handleRegisterAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Nickname string `json:"nickname"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "无效的请求",
+		})
+		return
+	}
+
+	if db != nil {
+		exists, err := CheckNicknameExists(req.Nickname)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "数据库错误",
+			})
+			return
+		}
+		if exists {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "昵称已存在",
+			})
+			return
+		}
+
+		exists, err = CheckEmailExists(req.Email)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "数据库错误",
+			})
+			return
+		}
+		if exists {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "邮箱已被注册",
+			})
+			return
+		}
+
+		_, err = CreateUser(req.Nickname, req.Email, req.Password)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "创建用户失败",
+			})
+			return
+		}
+	} else {
+		sessionMu.Lock()
+		defer sessionMu.Unlock()
+
+		if _, ok := users[req.Nickname]; ok {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "昵称已存在",
+			})
+			return
+		}
+
+		for _, u := range users {
+			if u.Email == req.Email {
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"success": false,
+					"message": "邮箱已被注册",
+				})
+				return
+			}
+		}
+
+		user := &User{
+			ID:       nextUserID,
+			Nickname: req.Nickname,
+			Email:    req.Email,
+			Password: req.Password,
+		}
+		nextUserID++
+		users[req.Nickname] = user
+		usersByID[user.ID] = user
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+	})
+}
+
+func (g *WebGUIGame) checkAuth(r *http.Request) *User {
+	cookie, err := r.Cookie("session_id")
+	if err != nil {
+		return nil
+	}
+
+	sessionMu.Lock()
+	defer sessionMu.Unlock()
+
+	return sessions[cookie.Value]
 }

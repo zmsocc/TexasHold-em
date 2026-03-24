@@ -107,7 +107,7 @@ func evaluateCombo(cards []Card) Hand {
 	case len(countGroups[4]) > 0:
 		handRank = FourOfKind
 		four := countGroups[4][0]
-		kickers = append(countGroups[1], four)
+		kickers = append([]Rank{four}, countGroups[1]...)
 	case len(countGroups[3]) > 0 && len(countGroups[2]) > 0:
 		handRank = FullHouse
 		three := countGroups[3][0]
@@ -122,15 +122,15 @@ func evaluateCombo(cards []Card) Hand {
 	case len(countGroups[3]) > 0:
 		handRank = ThreeOfKind
 		three := countGroups[3][0]
-		kickers = append(countGroups[1], three)
+		kickers = append([]Rank{three}, countGroups[1]...)
 	case len(countGroups[2]) == 2:
 		handRank = TwoPair
 		pairs := countGroups[2]
-		kickers = append(countGroups[1], pairs[0], pairs[1])
+		kickers = append(append([]Rank{pairs[0], pairs[1]}), countGroups[1]...)
 	case len(countGroups[2]) == 1:
 		handRank = OnePair
 		pair := countGroups[2][0]
-		kickers = append(countGroups[1], pair)
+		kickers = append([]Rank{pair}, countGroups[1]...)
 	default:
 		handRank = HighCard
 		kickers = ranks

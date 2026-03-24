@@ -21,7 +21,7 @@ type Game struct {
 	scanner        *bufio.Scanner
 }
 
-func NewGame(numPlayers int, startingChips int) *Game {
+func NewGame(numPlayers int, startingChips int, humanPlayerName string) *Game {
 	game := &Game{
 		Players:        make([]*Player, 0, numPlayers),
 		CommunityCards: make([]Card, 0, 5),
@@ -35,7 +35,11 @@ func NewGame(numPlayers int, startingChips int) *Game {
 	for i := 0; i < numPlayers; i++ {
 		name := names[i%len(names)]
 		if i == 0 {
-			name = "你"
+			if humanPlayerName != "" {
+				name = humanPlayerName
+			} else {
+				name = "你"
+			}
 		}
 		game.Players = append(game.Players, NewPlayer(i+1, name, startingChips))
 	}

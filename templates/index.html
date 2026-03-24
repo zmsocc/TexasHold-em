@@ -15,10 +15,67 @@
             min-height: 100vh;
             color: white;
         }
-        .container {
-            max-width: 1600px;
+        .main-container {
+            display: flex;
+            max-width: 1800px;
             margin: 0 auto;
             padding: 20px;
+            gap: 20px;
+        }
+        .game-area {
+            flex: 1;
+            min-width: 0;
+        }
+        .hand-rank-panel {
+            width: 300px;
+            background: rgba(0, 0, 0, 0.7);
+            border-radius: 15px;
+            padding: 15px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            cursor: pointer;
+        }
+        .panel-title {
+            font-size: 18px;
+            font-weight: bold;
+        }
+        .toggle-btn {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+        }
+        .panel-content {
+            display: block;
+        }
+        .panel-content.collapsed {
+            display: none;
+        }
+        .hand-rank-item {
+            margin-bottom: 8px;
+            padding: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            font-size: 13px;
+        }
+        .hand-rank-name {
+            font-weight: bold;
+            color: #ffd700;
+            margin-bottom: 3px;
+        }
+        .hand-rank-desc {
+            color: #ccc;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
         }
         .table {
             position: relative;
@@ -111,6 +168,9 @@
         .player-name {
             font-weight: bold;
             margin-bottom: 5px;
+            font-size: 20px;
+            color: #ffd700;
+            text-shadow: 0 0 10px rgba(255, 215, 0, 0.8);
         }
         .player-timer {
             color: #ff6b6b;
@@ -138,10 +198,32 @@
             left: 50%;
             transform: translate(-50%, -50%);
             display: flex;
+            flex-direction: row;
+            flex-wrap: wrap;
             gap: 10px;
             background: rgba(0,0,0,0.5);
             padding: 15px;
             border-radius: 10px;
+            justify-content: center;
+            align-items: flex-start;
+        }
+        .community-section {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+        }
+        .community-row {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+        .community-label {
+            font-size: 14px;
+            color: #ffd700;
+            font-weight: bold;
+            margin-bottom: 5px;
+            text-align: center;
         }
         .community .card {
             width: 80px;
@@ -149,15 +231,18 @@
         }
         .pot {
             position: absolute;
-            top: 25%;
+            top: 15%;
             left: 50%;
             transform: translateX(-50%);
-            background: rgba(0,0,0,0.7);
-            padding: 10px 20px;
+            background: rgba(255, 215, 0, 0.2);
+            border: 2px solid #ffd700;
+            padding: 12px 24px;
             border-radius: 20px;
-            font-size: 24px;
+            font-size: 28px;
             font-weight: bold;
             color: #ffd700;
+            text-shadow: 0 0 10px rgba(255, 215, 0, 0.8);
+            box-shadow: 0 0 20px rgba(255, 215, 0, 0.4);
         }
         .phase {
             position: absolute;
@@ -174,12 +259,16 @@
             bottom: 12%;
             left: 50%;
             transform: translateX(-50%);
-            background: rgba(0,0,0,0.7);
-            padding: 8px 16px;
+            background: rgba(255, 215, 0, 0.2);
+            border: 2px solid #ffd700;
+            padding: 12px 24px;
             border-radius: 15px;
-            font-size: 18px;
+            font-size: 22px;
             max-width: 80%;
             text-align: center;
+            color: #ffd700;
+            text-shadow: 0 0 10px rgba(255, 215, 0, 0.8);
+            box-shadow: 0 0 20px rgba(255, 215, 0, 0.4);
         }
         .controls {
             margin-top: 30px;
@@ -267,22 +356,75 @@
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>🎴 德州扑克 🎴</h1>
-        
-        <div class="players-top" id="playersTop"></div>
-        
-        <div class="table" id="table">
-            <div class="phase" id="phase">准备开始</div>
-            <div class="pot" id="pot">底池: 0</div>
-            <div class="community" id="community"></div>
-            <div class="message" id="message"></div>
+    <div class="main-container">
+        <div class="game-area">
+            <div class="container">
+                <h1>🎴 德州扑克 🎴</h1>
+                
+                <div class="players-top" id="playersTop"></div>
+                
+                <div class="table" id="table">
+                    <div class="phase" id="phase">准备开始</div>
+                    <div class="pot" id="pot">底池: 0</div>
+                    <div class="community" id="community"></div>
+                    <div class="message" id="message"></div>
+                </div>
+                
+                <div class="players-bottom" id="playersBottom"></div>
+                
+                <div class="controls" id="controls">
+                    <button class="btn btn-start" onclick="startGame()">开始游戏</button>
+                </div>
+            </div>
         </div>
         
-        <div class="players-bottom" id="playersBottom"></div>
-        
-        <div class="controls" id="controls">
-            <button class="btn btn-start" onclick="startGame()">开始游戏</button>
+        <div class="hand-rank-panel">
+            <div class="panel-header" onclick="togglePanel()">
+                <span class="panel-title">📋 牌型说明</span>
+                <button class="toggle-btn" id="toggleBtn">▼</button>
+            </div>
+            <div class="panel-content" id="panelContent">
+                <div class="hand-rank-item">
+                    <div class="hand-rank-name">1. 皇家同花顺</div>
+                    <div class="hand-rank-desc">A-K-Q-J-10，同花色</div>
+                </div>
+                <div class="hand-rank-item">
+                    <div class="hand-rank-name">2. 同花顺</div>
+                    <div class="hand-rank-desc">五张连续同花色牌</div>
+                </div>
+                <div class="hand-rank-item">
+                    <div class="hand-rank-name">3. 四条</div>
+                    <div class="hand-rank-desc">四张相同点数牌</div>
+                </div>
+                <div class="hand-rank-item">
+                    <div class="hand-rank-name">4. 满堂红</div>
+                    <div class="hand-rank-desc">三条加一对</div>
+                </div>
+                <div class="hand-rank-item">
+                    <div class="hand-rank-name">5. 同花</div>
+                    <div class="hand-rank-desc">五张同花色牌</div>
+                </div>
+                <div class="hand-rank-item">
+                    <div class="hand-rank-name">6. 顺子</div>
+                    <div class="hand-rank-desc">五张连续点数牌</div>
+                </div>
+                <div class="hand-rank-item">
+                    <div class="hand-rank-name">7. 三条</div>
+                    <div class="hand-rank-desc">三张相同点数牌</div>
+                </div>
+                <div class="hand-rank-item">
+                    <div class="hand-rank-name">8. 两对</div>
+                    <div class="hand-rank-desc">两个对子</div>
+                </div>
+                <div class="hand-rank-item">
+                    <div class="hand-rank-name">9. 一对</div>
+                    <div class="hand-rank-desc">一个对子</div>
+                </div>
+                <div class="hand-rank-item">
+                    <div class="hand-rank-name">10. 高牌</div>
+                    <div class="hand-rank-desc">无以上牌型时比较最大单牌</div>
+                </div>
+            </div>
         </div>
     </div>
     
@@ -296,6 +438,20 @@
         let lastStateHash = '';
         let timerInterval = null;
         let currentTimerStart = null;
+        let panelCollapsed = false;
+        
+        function togglePanel() {
+            panelCollapsed = !panelCollapsed;
+            const content = document.getElementById('panelContent');
+            const btn = document.getElementById('toggleBtn');
+            if (panelCollapsed) {
+                content.classList.add('collapsed');
+                btn.textContent = '▶';
+            } else {
+                content.classList.remove('collapsed');
+                btn.textContent = '▼';
+            }
+        }
         
         function hashState(state) {
             return JSON.stringify(state);
@@ -321,11 +477,13 @@
                 .then(r => r.json())
                 .then(state => {
                     const currentHash = hashState(state);
-                    if (currentHash !== lastStateHash) {
+                    const needsUpdate = currentHash !== lastStateHash;
+                    
+                    if (needsUpdate) {
                         lastStateHash = currentHash;
                         gameState = state;
                         
-                        if (state.currentPlayer && state.waitingForInput) {
+                        if (state.currentPlayer) {
                             startTimer();
                         } else {
                             stopTimer();
@@ -333,6 +491,8 @@
                         
                         updateUI(state);
                     }
+                    
+                    updateTimerDisplay();
                 });
         }
         
@@ -367,12 +527,59 @@
             
             const communityDiv = document.getElementById('community');
             communityDiv.innerHTML = '';
-            (state.communityCards || ['bm.png','bm.png','bm.png','bm.png','bm.png']).forEach(card => {
-                const img = document.createElement('img');
-                img.src = '/' + card;
-                img.className = 'card';
-                communityDiv.appendChild(img);
-            });
+            
+            if (state.showdownCards && state.showdownCards.length > 0) {
+                const communitySection = document.createElement('div');
+                communitySection.className = 'community-section';
+                
+                const communityLabel = document.createElement('div');
+                communityLabel.className = 'community-label';
+                communityLabel.textContent = '公共牌：';
+                communitySection.appendChild(communityLabel);
+                
+                const communityCardsRow = document.createElement('div');
+                communityCardsRow.className = 'community-row';
+                (state.communityCards || ['bm.png','bm.png','bm.png','bm.png','bm.png']).forEach(card => {
+                    const img = document.createElement('img');
+                    img.src = '/' + card;
+                    img.className = 'card';
+                    communityCardsRow.appendChild(img);
+                });
+                communitySection.appendChild(communityCardsRow);
+                communityDiv.appendChild(communitySection);
+                
+                const winnerSection = document.createElement('div');
+                winnerSection.className = 'community-section';
+                
+                const winnerLabel = document.createElement('div');
+                winnerLabel.className = 'community-label';
+                if (state.winnerName && state.winnerHandRank) {
+                    winnerLabel.textContent = '胜者：' + state.winnerName + ' 牌型：' + state.winnerHandRank;
+                } else if (state.winnerHandRank) {
+                    winnerLabel.textContent = '牌型：' + state.winnerHandRank;
+                } else {
+                    winnerLabel.textContent = '胜者牌：';
+                }
+                winnerSection.appendChild(winnerLabel);
+                
+                const winnerCardsRow = document.createElement('div');
+                winnerCardsRow.className = 'community-row';
+                state.showdownCards.forEach(card => {
+                    const img = document.createElement('img');
+                    img.src = '/' + card;
+                    img.className = 'card';
+                    winnerCardsRow.appendChild(img);
+                });
+                winnerSection.appendChild(winnerCardsRow);
+                communityDiv.appendChild(winnerSection);
+            } else {
+                (state.communityCards || ['bm.png','bm.png','bm.png','bm.png','bm.png']).forEach(card => {
+                    const img = document.createElement('img');
+                    img.src = '/' + card;
+                    img.className = 'card';
+                    communityDiv.appendChild(img);
+                });
+            }
             
             const allPlayers = state.players || [];
             const topPlayers = allPlayers.slice(0, Math.ceil(allPlayers.length / 2));
