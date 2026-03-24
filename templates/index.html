@@ -16,18 +16,18 @@
             color: white;
         }
         .container {
-            max-width: 1200px;
+            max-width: 1600px;
             margin: 0 auto;
             padding: 20px;
         }
         .table {
             position: relative;
             width: 100%;
-            max-width: 900px;
+            max-width: 1200px;
+            height: 675px;
             margin: 0 auto;
-            aspect-ratio: 16/9;
-            background: url('/zhuomian.png') center/cover no-repeat;
-            border-radius: 50%;
+            background: url('/zhuomian.png') center/contain no-repeat;
+            border-radius: 20px;
             box-shadow: 0 0 50px rgba(0,0,0,0.5);
         }
         .players-top {
@@ -49,7 +49,7 @@
             padding: 10px;
             border-radius: 10px;
             text-align: center;
-            min-width: 120px;
+            min-width: 130px;
             transition: all 0.3s;
         }
         .player.human {
@@ -70,6 +70,11 @@
         .player-name {
             font-weight: bold;
             margin-bottom: 5px;
+        }
+        .player-timer {
+            color: #ff6b6b;
+            font-size: 14px;
+            margin-bottom: 3px;
         }
         .player-chips {
             color: #ffd700;
@@ -98,40 +103,40 @@
             border-radius: 10px;
         }
         .community .card {
-            width: 70px;
-            height: 98px;
+            width: 80px;
+            height: 112px;
         }
         .pot {
             position: absolute;
-            top: 30%;
+            top: 25%;
             left: 50%;
             transform: translateX(-50%);
             background: rgba(0,0,0,0.7);
             padding: 10px 20px;
             border-radius: 20px;
-            font-size: 20px;
+            font-size: 24px;
             font-weight: bold;
             color: #ffd700;
         }
         .phase {
             position: absolute;
-            top: 10%;
+            top: 8%;
             left: 50%;
             transform: translateX(-50%);
             background: rgba(0,0,0,0.7);
             padding: 8px 16px;
             border-radius: 15px;
-            font-size: 16px;
+            font-size: 18px;
         }
         .message {
             position: absolute;
-            bottom: 15%;
+            bottom: 12%;
             left: 50%;
             transform: translateX(-50%);
             background: rgba(0,0,0,0.7);
             padding: 8px 16px;
             border-radius: 15px;
-            font-size: 16px;
+            font-size: 18px;
             max-width: 80%;
             text-align: center;
         }
@@ -248,6 +253,8 @@
         let gameState = null;
         let pollInterval = null;
         let lastStateHash = '';
+        let timerInterval = null;
+        let currentTimerStart = null;
         
         function hashState(state) {
             return JSON.stringify(state);
@@ -276,9 +283,40 @@
                     if (currentHash !== lastStateHash) {
                         lastStateHash = currentHash;
                         gameState = state;
+                        
+                        if (state.currentPlayer && state.waitingForInput) {
+                            startTimer();
+                        } else {
+                            stopTimer();
+                        }
+                        
                         updateUI(state);
                     }
                 });
+        }
+        
+        function startTimer() {
+            if (timerInterval) clearInterval(timerInterval);
+            currentTimerStart = Date.now();
+            timerInterval = setInterval(updateTimerDisplay, 1000);
+        }
+        
+        function stopTimer() {
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+        }
+        
+        function updateTimerDisplay() {
+            if (!gameState || !gameState.currentPlayer) return;
+            
+            const elapsed = Math.floor((Date.now() - currentTimerStart) / 1000);
+            const timeLeft = Math.max(0, 60 - elapsed);
+            
+            document.querySelectorAll('.player.current .player-timer').forEach(el => {
+                el.textContent = `⏱ ${timeLeft}s`;
+            });
         }
         
         function updateUI(state) {
@@ -299,8 +337,8 @@
             const topPlayers = allPlayers.slice(0, Math.ceil(allPlayers.length / 2));
             const bottomPlayers = allPlayers.slice(Math.ceil(allPlayers.length / 2));
             
-            renderPlayers('playersTop', topPlayers);
-            renderPlayers('playersBottom', bottomPlayers);
+            renderPlayers('playersTop', topPlayers, state.currentPlayer);
+            renderPlayers('playersBottom', bottomPlayers, state.currentPlayer);
             
             renderControls(state);
             
@@ -313,7 +351,7 @@
             }
         }
         
-        function renderPlayers(containerId, players) {
+        function renderPlayers(containerId, players, currentPlayerName) {
             const container = document.getElementById(containerId);
             container.innerHTML = '';
             (players || []).forEach(player => {
@@ -323,8 +361,15 @@
                 if (player.folded) classes += ' folded';
                 if (player.isCurrent) classes += ' current';
                 div.className = classes;
+                
+                let timerHtml = '';
+                if (player.isCurrent) {
+                    timerHtml = '<div class="player-timer">⏱ 60s</div>';
+                }
+                
                 div.innerHTML = `
                     <div class="player-name">${player.name}${player.isCurrent ? ' 👈' : ''}</div>
+                    ${timerHtml}
                     <div class="player-chips">💰 ${player.chips}</div>
                     ${player.bet > 0 ? '<div class="player-chips">下注: ' + player.bet + '</div>' : ''}
                     <div class="player-cards">
@@ -337,6 +382,11 @@
         
         function renderControls(state) {
             const controls = document.getElementById('controls');
+            
+            if (!state.waitingForInput && !state.currentPlayer && state.phase && state.phase !== '准备开始' && state.phase !== '摊牌') {
+                controls.innerHTML = '<div style="font-size: 18px;">等待其他玩家...</div>';
+                return;
+            }
             
             if (!state.waitingForInput) {
                 controls.innerHTML = '';

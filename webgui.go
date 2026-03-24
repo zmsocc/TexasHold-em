@@ -368,8 +368,8 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 			}
 			g.mu.Lock()
 		} else {
-			g.message = fmt.Sprintf("轮到 %s...", player.Name)
-			time.Sleep(1000 * time.Millisecond)
+			g.message = fmt.Sprintf("轮到 %s 思考中...", player.Name)
+			time.Sleep(3000 * time.Millisecond)
 			action, raiseAmount = g.game.getAIAction(player)
 		}
 
