@@ -1,0 +1,600 @@
+package main
+
+import (
+	"fmt"
+	"image/color"
+	"math/rand"
+	"strconv"
+	"sync"
+	"time"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
+	"fyne.io/fyne/v2/widget"
+)
+
+type GUIGame struct {
+	game          *Game
+	window        fyne.Window
+	tableImage    *canvas.Image
+	playerCards   [][]*canvas.Image
+	communityCards []*canvas.Image
+	potLabel      *widget.Label
+	phaseLabel    *widget.Label
+	actionButtons []*widget.Button
+	statusLabel   *widget.Label
+	actionChan    chan ActionData
+	mu            sync.Mutex
+	firstGame     bool
+}
+
+type ActionData struct {
+	Action Action
+	Amount int
+}
+
+func NewGUIGame() *GUIGame {
+	return &GUIGame{
+		actionChan: make(chan ActionData, 1),
+		firstGame:  true,
+	}
+}
+
+func (g *GUIGame) Run() {
+	a := app.NewWithID("com.trae.poker")
+	a.Settings().SetTheme(&myTheme{})
+	g.window = a.NewWindow("德州扑克")
+	g.window.Resize(fyne.NewSize(1200, 800))
+
+	g.createUI()
+	g.showStartDialog()
+
+	g.window.ShowAndRun()
+}
+
+func (g *GUIGame) createUI() {
+	g.tableImage = canvas.NewImageFromFile("zhuomian.png")
+	g.tableImage.FillMode = canvas.ImageFillContain
+
+	g.potLabel = widget.NewLabel("底池: 0")
+	g.potLabel.TextStyle = fyne.TextStyle{Bold: true}
+	g.phaseLabel = widget.NewLabel("准备开始")
+	g.statusLabel = widget.NewLabel("")
+
+	g.communityCards = make([]*canvas.Image, 5)
+	for i := 0; i < 5; i++ {
+		g.communityCards[i] = canvas.NewImageFromFile("bm.png")
+		g.communityCards[i].SetMinSize(fyne.NewSize(80, 112))
+		g.communityCards[i].FillMode = canvas.ImageFillContain
+	}
+
+	g.createActionButtons()
+
+	communityContainer := container.NewHBox(
+		layout.NewSpacer(),
+		g.communityCards[0],
+		g.communityCards[1],
+		g.communityCards[2],
+		g.communityCards[3],
+		g.communityCards[4],
+		layout.NewSpacer(),
+	)
+
+	infoContainer := container.NewVBox(
+		container.NewCenter(g.phaseLabel),
+		container.NewCenter(g.potLabel),
+		container.NewCenter(g.statusLabel),
+		communityContainer,
+	)
+
+	buttonContainer := container.NewHBox(
+		layout.NewSpacer(),
+		g.actionButtons[0],
+		g.actionButtons[1],
+		g.actionButtons[2],
+		g.actionButtons[3],
+		g.actionButtons[4],
+		layout.NewSpacer(),
+	)
+
+	g.playerCards = make([][]*canvas.Image, 10)
+	for i := 0; i < 10; i++ {
+		g.playerCards[i] = make([]*canvas.Image, 2)
+		for j := 0; j < 2; j++ {
+			g.playerCards[i][j] = canvas.NewImageFromFile("bm.png")
+			g.playerCards[i][j].SetMinSize(fyne.NewSize(60, 84))
+			g.playerCards[i][j].FillMode = canvas.ImageFillContain
+		}
+	}
+
+	playerRow1 := container.NewHBox(
+		layout.NewSpacer(),
+		g.createPlayerArea(1),
+		g.createPlayerArea(2),
+		g.createPlayerArea(3),
+		g.createPlayerArea(4),
+		layout.NewSpacer(),
+	)
+
+	playerRow2 := container.NewHBox(
+		layout.NewSpacer(),
+		g.createPlayerArea(5),
+		g.createPlayerArea(6),
+		g.createPlayerArea(7),
+		g.createPlayerArea(8),
+		layout.NewSpacer(),
+	)
+
+	mainContent := container.NewBorder(
+		playerRow1,
+		container.NewVBox(playerRow2, buttonContainer),
+		nil,
+		nil,
+		container.NewStack(g.tableImage, infoContainer),
+	)
+
+	g.window.SetContent(mainContent)
+	g.setButtonsEnabled(false)
+}
+
+func (g *GUIGame) createPlayerArea(index int) *fyne.Container {
+	nameLabel := widget.NewLabel("")
+	chipsLabel := widget.NewLabel("")
+	nameLabel.Alignment = fyne.TextAlignCenter
+	chipsLabel.Alignment = fyne.TextAlignCenter
+
+	cardContainer := container.NewHBox(
+		g.playerCards[index][0],
+		g.playerCards[index][1],
+	)
+
+	return container.NewVBox(
+		nameLabel,
+		chipsLabel,
+		cardContainer,
+	)
+}
+
+func (g *GUIGame) createActionButtons() {
+	g.actionButtons = make([]*widget.Button, 5)
+	
+	g.actionButtons[0] = widget.NewButton("弃牌", func() {
+		g.actionChan <- ActionData{Action: Fold, Amount: 0}
+	})
+	
+	g.actionButtons[1] = widget.NewButton("过牌", func() {
+		g.actionChan <- ActionData{Action: Check, Amount: 0}
+	})
+	
+	g.actionButtons[2] = widget.NewButton("跟注", func() {
+		g.actionChan <- ActionData{Action: Call, Amount: 0}
+	})
+	
+	g.actionButtons[3] = widget.NewButton("加注", func() {
+		g.showRaiseDialog()
+	})
+	
+	g.actionButtons[4] = widget.NewButton("全下", func() {
+		g.actionChan <- ActionData{Action: AllIn, Amount: 0}
+	})
+}
+
+func (g *GUIGame) showRaiseDialog() {
+	player := g.game.Players[0]
+	minRaise := g.game.BigBlind
+	if g.game.CurrentBet > 0 {
+		minRaise = g.game.CurrentBet
+	}
+	maxRaise := player.Chips - (g.game.CurrentBet - player.Bet)
+	
+	entry := widget.NewEntry()
+	entry.SetText(fmt.Sprintf("%d", minRaise))
+	
+	d := dialog.NewForm("加注", "确定", "取消",
+		[]*widget.FormItem{
+			widget.NewFormItem(fmt.Sprintf("金额 (%d-%d):", minRaise, maxRaise), entry),
+		},
+		func(ok bool) {
+			if ok {
+				amount, err := strconv.Atoi(entry.Text)
+				if err == nil && amount >= minRaise && amount <= maxRaise {
+					g.actionChan <- ActionData{Action: Raise, Amount: amount}
+				} else {
+					dialog.ShowError(fmt.Errorf("无效的金额"), g.window)
+					g.showRaiseDialog()
+				}
+			}
+		},
+		g.window,
+	)
+	d.Resize(fyne.NewSize(300, 200))
+	d.Show()
+}
+
+func (g *GUIGame) setButtonsEnabled(enabled bool) {
+	for _, btn := range g.actionButtons {
+		btn.Enable()
+		if !enabled {
+			btn.Disable()
+		}
+	}
+}
+
+func (g *GUIGame) updateButtonVisibility(player *Player) {
+	canCheck := g.game.CurrentBet == player.Bet
+	canCall := g.game.CurrentBet > player.Bet && player.Chips > 0
+	minRaise := g.game.BigBlind
+	if g.game.CurrentBet > 0 {
+		minRaise = g.game.CurrentBet
+	}
+	canRaise := player.Chips > (g.game.CurrentBet - player.Bet + minRaise)
+	
+	g.actionButtons[0].Show()
+	g.actionButtons[1].Show()
+	g.actionButtons[2].Show()
+	g.actionButtons[3].Show()
+	g.actionButtons[4].Show()
+	
+	if !canCheck {
+		g.actionButtons[1].Hide()
+	}
+	if !canCall {
+		g.actionButtons[2].Hide()
+	}
+	if !canRaise {
+		g.actionButtons[3].Hide()
+	}
+	if player.Chips <= 0 {
+		g.actionButtons[4].Hide()
+	}
+}
+
+func (g *GUIGame) showStartDialog() {
+	numPlayers := 6
+	slider := widget.NewSlider(2, 10)
+	slider.SetValue(6)
+	slider.Step = 1
+	
+	label := widget.NewLabel("玩家人数: 6")
+	slider.OnChanged = func(v float64) {
+		numPlayers = int(v)
+		label.SetText(fmt.Sprintf("玩家人数: %d", numPlayers))
+	}
+	
+	d := dialog.NewForm("欢迎来到德州扑克", "开始游戏", "",
+		[]*widget.FormItem{
+			widget.NewFormItem("", label),
+			widget.NewFormItem("", slider),
+		},
+		func(ok bool) {
+			if ok {
+				go g.startGame(numPlayers)
+			}
+		},
+		g.window,
+	)
+	d.Resize(fyne.NewSize(400, 250))
+	d.Show()
+}
+
+func (g *GUIGame) showContinueDialog() {
+	d := dialog.NewConfirm("继续下一局？", "是否继续下一局游戏？",
+		func(continueGame bool) {
+			if continueGame {
+				g.showShuffleDialog()
+			} else {
+				g.window.Close()
+			}
+		},
+		g.window,
+	)
+	d.Show()
+}
+
+func (g *GUIGame) showShuffleDialog() {
+	d := dialog.NewConfirm("更换位置？", "是否随机打乱玩家位置？",
+		func(shuffle bool) {
+			if shuffle {
+				g.shufflePlayers()
+			}
+			go g.playHand()
+		},
+		g.window,
+	)
+	d.Show()
+}
+
+func (g *GUIGame) shufflePlayers() {
+	rand.Seed(time.Now().UnixNano())
+	rand.Shuffle(len(g.game.Players), func(i, j int) {
+		g.game.Players[i], g.game.Players[j] = g.game.Players[j], g.game.Players[i]
+	})
+	for i, p := range g.game.Players {
+		p.ID = i + 1
+	}
+}
+
+func (g *GUIGame) startGame(numPlayers int) {
+	g.mu.Lock()
+	g.game = NewGame(numPlayers, 100)
+	g.mu.Unlock()
+	
+	if g.firstGame {
+		g.shufflePlayers()
+		g.firstGame = false
+	}
+	
+	g.playHand()
+}
+
+func (g *GUIGame) playHand() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	
+	g.game.NewHand()
+	g.resetDisplay()
+	g.updateDisplay()
+	
+	g.phaseLabel.SetText("翻牌前")
+	g.game.DealHoleCards()
+	g.updateDisplay()
+	
+	time.Sleep(500 * time.Millisecond)
+	g.game.PostBlinds()
+	g.updatePot()
+	g.updateDisplay()
+	
+	g.runBettingRound("翻牌前")
+	if g.game.GameOver() {
+		g.showdown()
+		return
+	}
+	
+	g.phaseLabel.SetText("翻牌圈")
+	g.game.DealFlop()
+	g.updateCommunityCards()
+	g.updateDisplay()
+	g.runBettingRound("翻牌圈")
+	if g.game.GameOver() {
+		g.showdown()
+		return
+	}
+	
+	g.phaseLabel.SetText("转牌圈")
+	g.game.DealTurn()
+	g.updateCommunityCards()
+	g.updateDisplay()
+	g.runBettingRound("转牌圈")
+	if g.game.GameOver() {
+		g.showdown()
+		return
+	}
+	
+	g.phaseLabel.SetText("河牌圈")
+	g.game.DealRiver()
+	g.updateCommunityCards()
+	g.updateDisplay()
+	g.runBettingRound("河牌圈")
+	
+	g.showdown()
+}
+
+func (g *GUIGame) resetDisplay() {
+	for i := 0; i < 10; i++ {
+		for j := 0; j < 2; j++ {
+			g.playerCards[i][j].File = "bm.png"
+			g.playerCards[i][j].Refresh()
+		}
+	}
+	for i := 0; i < 5; i++ {
+		g.communityCards[i].File = "bm.png"
+		g.communityCards[i].Refresh()
+	}
+}
+
+func (g *GUIGame) updateDisplay() {
+	g.updatePot()
+	g.updatePlayerCards()
+}
+
+func (g *GUIGame) updatePot() {
+	g.potLabel.SetText(fmt.Sprintf("底池: %d", g.game.Pot))
+}
+
+func (g *GUIGame) updatePlayerCards() {
+	for i, p := range g.game.Players {
+		if i < len(g.playerCards) {
+			if p.Name == "你" {
+				if len(p.HoleCards) >= 1 {
+					g.playerCards[i][0].File = p.HoleCards[0].ImageFileName()
+					g.playerCards[i][0].Refresh()
+				}
+				if len(p.HoleCards) >= 2 {
+					g.playerCards[i][1].File = p.HoleCards[1].ImageFileName()
+					g.playerCards[i][1].Refresh()
+				}
+			} else {
+				g.playerCards[i][0].File = "bm.png"
+				g.playerCards[i][1].File = "bm.png"
+				g.playerCards[i][0].Refresh()
+				g.playerCards[i][1].Refresh()
+			}
+		}
+	}
+}
+
+func (g *GUIGame) updateCommunityCards() {
+	for i, c := range g.game.CommunityCards {
+		if i < len(g.communityCards) {
+			g.communityCards[i].File = c.ImageFileName()
+			g.communityCards[i].Refresh()
+		}
+	}
+}
+
+func (g *GUIGame) revealAllCards() {
+	for i, p := range g.game.Players {
+		if i < len(g.playerCards) && !p.Folded {
+			if len(p.HoleCards) >= 1 {
+				g.playerCards[i][0].File = p.HoleCards[0].ImageFileName()
+				g.playerCards[i][0].Refresh()
+			}
+			if len(p.HoleCards) >= 2 {
+				g.playerCards[i][1].File = p.HoleCards[1].ImageFileName()
+				g.playerCards[i][1].Refresh()
+			}
+		}
+	}
+}
+
+func (g *GUIGame) runBettingRound(phase string) {
+	startPos := g.game.ButtonPos + 1
+	if phase == "翻牌前" {
+		startPos = g.game.ButtonPos + 3
+	}
+	
+	activePlayers := g.game.getActivePlayers()
+	if len(activePlayers) <= 1 {
+		return
+	}
+	
+	lastRaisePos := -1
+	currentPos := startPos % len(g.game.Players)
+	betCount := 0
+	
+	for {
+		player := g.game.Players[currentPos]
+		
+		if player.Folded || player.AllIn {
+			currentPos = (currentPos + 1) % len(g.game.Players)
+			continue
+		}
+		
+		if lastRaisePos == currentPos && betCount > 0 {
+			break
+		}
+		
+		var action Action
+		var raiseAmount int
+		
+		if player.Name == "你" {
+			g.statusLabel.SetText(fmt.Sprintf("轮到你了！"))
+			g.updateButtonVisibility(player)
+			g.setButtonsEnabled(true)
+			
+			actionData := <-g.actionChan
+			action = actionData.Action
+			raiseAmount = actionData.Amount
+			
+			g.setButtonsEnabled(false)
+		} else {
+			g.statusLabel.SetText(fmt.Sprintf("轮到 %s...", player.Name))
+			time.Sleep(800 * time.Millisecond)
+			action, raiseAmount = g.game.getAIAction(player)
+		}
+		
+		g.game.executeAction(player, action, raiseAmount)
+		g.updateDisplay()
+		g.statusLabel.SetText(fmt.Sprintf("%s 选择了 %s", player.Name, action))
+		
+		if action == Raise || action == AllIn {
+			lastRaisePos = currentPos
+			betCount++
+		} else if action == Fold {
+			activePlayers = g.game.getActivePlayers()
+			if len(activePlayers) <= 1 {
+				break
+			}
+		}
+		
+		time.Sleep(500 * time.Millisecond)
+		currentPos = (currentPos + 1) % len(g.game.Players)
+	}
+	
+	g.game.resetBets()
+	g.statusLabel.SetText("")
+}
+
+func (g *GUIGame) showdown() {
+	g.revealAllCards()
+	g.phaseLabel.SetText("摊牌")
+	
+	activePlayers := g.game.getActivePlayers()
+	
+	var winnerText string
+	if len(activePlayers) == 1 {
+		winner := activePlayers[0]
+		winner.Chips += g.game.Pot
+		winnerText = fmt.Sprintf("%s 获胜！赢得 %d 筹码！", winner.Name, g.game.Pot)
+	} else {
+		type playerHand struct {
+			player *Player
+			hand   Hand
+		}
+		
+		var hands []playerHand
+		
+		for _, p := range activePlayers {
+			allCards := append(p.HoleCards, g.game.CommunityCards...)
+			hand := EvaluateHand(allCards)
+			hands = append(hands, playerHand{p, hand})
+		}
+		
+		bestHand := hands[0].hand
+		var winners []*Player
+		
+		for _, ph := range hands {
+			cmp := CompareHands(ph.hand, bestHand)
+			if cmp > 0 {
+				bestHand = ph.hand
+				winners = []*Player{ph.player}
+			} else if cmp == 0 {
+				winners = append(winners, ph.player)
+			}
+		}
+		
+		winAmount := g.game.Pot / len(winners)
+		for _, winner := range winners {
+			winner.Chips += winAmount
+		}
+		
+		winnerText = "获胜者: "
+		for i, w := range winners {
+			if i > 0 {
+				winnerText += ", "
+			}
+			winnerText += w.Name
+		}
+		winnerText += fmt.Sprintf(" 每人赢得 %d 筹码！(牌型: %v)", winAmount, bestHand.Rank)
+	}
+	
+	g.statusLabel.SetText(winnerText)
+	g.game.ButtonPos = (g.game.ButtonPos + 1) % len(g.game.Players)
+	g.updateDisplay()
+	
+	time.Sleep(2 * time.Second)
+	g.showContinueDialog()
+}
+
+type myTheme struct{}
+
+func (m myTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
+	return theme.DefaultTheme().Color(name, variant)
+}
+
+func (m myTheme) Font(style fyne.TextStyle) fyne.Resource {
+	return theme.DefaultTheme().Font(style)
+}
+
+func (m myTheme) Icon(name fyne.ThemeIconName) fyne.Resource {
+	return theme.DefaultTheme().Icon(name)
+}
+
+func (m myTheme) Size(name fyne.ThemeSizeName) float32 {
+	return theme.DefaultTheme().Size(name)
+}
