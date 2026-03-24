@@ -11,20 +11,24 @@ import (
 )
 
 type WebGUIGame struct {
-	game            *Game
-	mu              sync.Mutex
-	actionChan      chan ActionData
-	firstGame       bool
-	currentPhase    string
+	game             *Game
+	mu               sync.Mutex
+	actionChan       chan ActionData
+	firstGame        bool
+	currentPhase     string
 	currentPlayerName string
-	waitingForInput bool
-	canCheck        bool
-	canCall         bool
-	canRaise        bool
-	minRaise        int
-	maxRaise        int
-	callAmount      int
-	message         string
+	waitingForInput  bool
+	canCheck         bool
+	canCall          bool
+	canRaise         bool
+	minRaise         int
+	maxRaise         int
+	callAmount       int
+	message          string
+	gameOver         bool
+	winnerText       string
+	askContinue      bool
+	askShuffle       bool
 }
 
 type GameState struct {
@@ -73,19 +77,23 @@ func NewWebGUIGame() *WebGUIGame {
 
 func (g *WebGUIGame) getGameState() *GameState {
 	state := &GameState{
-		Players:        make([]PlayerState, 0, len(g.game.Players)),
-		CommunityCards: make([]string, 0, len(g.game.CommunityCards)),
-		Pot:            g.game.Pot,
-		Phase:          g.currentPhase,
-		CurrentPlayer:  g.currentPlayerName,
-		Message:        g.message,
-		CanCheck:       g.canCheck,
-		CanCall:        g.canCall,
-		CanRaise:       g.canRaise,
-		MinRaise:       g.minRaise,
-		MaxRaise:       g.maxRaise,
-		CallAmount:     g.callAmount,
+		Players:         make([]PlayerState, 0, len(g.game.Players)),
+		CommunityCards:  make([]string, 0, len(g.game.CommunityCards)),
+		Pot:             g.game.Pot,
+		Phase:           g.currentPhase,
+		CurrentPlayer:   g.currentPlayerName,
+		Message:         g.message,
+		GameOver:        g.gameOver,
+		WinnerText:      g.winnerText,
+		CanCheck:        g.canCheck,
+		CanCall:         g.canCall,
+		CanRaise:        g.canRaise,
+		MinRaise:        g.minRaise,
+		MaxRaise:        g.maxRaise,
+		CallAmount:      g.callAmount,
 		WaitingForInput: g.waitingForInput,
+		AskContinue:     g.askContinue,
+		AskShuffle:      g.askShuffle,
 	}
 
 	for _, p := range g.game.Players {
@@ -143,8 +151,6 @@ func (g *WebGUIGame) Run() {
 	fmt.Println("=====================================")
 	fmt.Println("请在浏览器中打开: http://localhost:8080")
 	fmt.Println("=====================================")
-
-	go g.gameLoop()
 
 	http.ListenAndServe(":8080", nil)
 }
@@ -256,57 +262,83 @@ func (g *WebGUIGame) shufflePlayers() {
 	}
 }
 
-func (g *WebGUIGame) gameLoop() {
-}
-
 func (g *WebGUIGame) playHand() {
 	g.mu.Lock()
-	defer g.mu.Unlock()
-
+	
 	g.game.NewHand()
 	g.currentPhase = "翻牌前"
 	g.message = "游戏开始！"
+	g.gameOver = false
+	g.winnerText = ""
+	g.askContinue = false
+	g.askShuffle = false
 
 	g.game.DealHoleCards()
 	g.currentPhase = "翻牌前"
+	g.mu.Unlock()
 
 	time.Sleep(500 * time.Millisecond)
+
+	g.mu.Lock()
 	g.game.PostBlinds()
 	g.currentPhase = "翻牌前"
+	g.mu.Unlock()
 
 	g.runBettingRound("翻牌前")
+	
+	g.mu.Lock()
 	if g.game.GameOver() {
+		g.mu.Unlock()
 		g.showdown()
 		return
 	}
+	g.mu.Unlock()
 
+	g.mu.Lock()
 	g.game.DealFlop()
 	g.currentPhase = "翻牌圈"
 	g.message = ""
+	g.mu.Unlock()
+
 	g.runBettingRound("翻牌圈")
+	
+	g.mu.Lock()
 	if g.game.GameOver() {
+		g.mu.Unlock()
 		g.showdown()
 		return
 	}
+	g.mu.Unlock()
 
+	g.mu.Lock()
 	g.game.DealTurn()
 	g.currentPhase = "转牌圈"
 	g.message = ""
+	g.mu.Unlock()
+
 	g.runBettingRound("转牌圈")
+	
+	g.mu.Lock()
 	if g.game.GameOver() {
+		g.mu.Unlock()
 		g.showdown()
 		return
 	}
+	g.mu.Unlock()
 
+	g.mu.Lock()
 	g.game.DealRiver()
 	g.currentPhase = "河牌圈"
 	g.message = ""
+	g.mu.Unlock()
+
 	g.runBettingRound("河牌圈")
 
 	g.showdown()
 }
 
 func (g *WebGUIGame) runBettingRound(phase string) {
+	g.mu.Lock()
 	startPos := g.game.ButtonPos + 1
 	if phase == "翻牌前" {
 		startPos = g.game.ButtonPos + 3
@@ -314,22 +346,27 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 
 	activePlayers := g.game.getActivePlayers()
 	if len(activePlayers) <= 1 {
+		g.mu.Unlock()
 		return
 	}
 
 	lastRaisePos := -1
 	currentPos := startPos % len(g.game.Players)
 	betCount := 0
+	g.mu.Unlock()
 
 	for {
+		g.mu.Lock()
 		player := g.game.Players[currentPos]
 
 		if player.Folded || player.AllIn {
 			currentPos = (currentPos + 1) % len(g.game.Players)
+			g.mu.Unlock()
 			continue
 		}
 
 		if lastRaisePos == currentPos && betCount > 0 {
+			g.mu.Unlock()
 			break
 		}
 
@@ -369,7 +406,9 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 			g.mu.Lock()
 		} else {
 			g.message = fmt.Sprintf("轮到 %s 思考中...", player.Name)
+			g.mu.Unlock()
 			time.Sleep(3000 * time.Millisecond)
+			g.mu.Lock()
 			action, raiseAmount = g.game.getAIAction(player)
 		}
 
@@ -383,21 +422,26 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 		} else if action == Fold {
 			activePlayers = g.game.getActivePlayers()
 			if len(activePlayers) <= 1 {
+				g.mu.Unlock()
 				break
 			}
 		}
 
+		g.mu.Unlock()
 		time.Sleep(500 * time.Millisecond)
 		currentPos = (currentPos + 1) % len(g.game.Players)
 	}
 
+	g.mu.Lock()
 	g.game.resetBets()
 	g.message = ""
 	g.waitingForInput = false
 	g.currentPlayerName = ""
+	g.mu.Unlock()
 }
 
 func (g *WebGUIGame) showdown() {
+	g.mu.Lock()
 	g.currentPhase = "摊牌"
 
 	activePlayers := g.game.getActivePlayers()
@@ -449,29 +493,29 @@ func (g *WebGUIGame) showdown() {
 		winnerText += fmt.Sprintf(" 每人赢得 %d 筹码！(牌型: %v)", winAmount, bestHand.Rank)
 	}
 
-	state := g.getGameState()
-	state.WinnerText = winnerText
-	state.GameOver = true
-	state.AskContinue = true
+	g.winnerText = winnerText
+	g.gameOver = true
+	g.askContinue = true
+	g.currentPlayerName = ""
 
 	g.game.ButtonPos = (g.game.ButtonPos + 1) % len(g.game.Players)
-
 	g.mu.Unlock()
+
 	actionData := <-g.actionChan
+	
 	g.mu.Lock()
-
 	if actionData.Amount == -1 {
-		state = g.getGameState()
-		state.AskContinue = false
-		state.AskShuffle = true
-		state.GameOver = false
-
+		g.askContinue = false
+		g.askShuffle = true
+		g.gameOver = false
 		g.mu.Unlock()
+		
 		actionData = <-g.actionChan
+		
 		g.mu.Lock()
-
 		if actionData.Amount == -2 {
 		}
 		go g.playHand()
 	}
+	g.mu.Unlock()
 }
