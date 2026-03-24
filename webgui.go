@@ -29,6 +29,7 @@ type WebGUIGame struct {
 	winnerText       string
 	askContinue      bool
 	askShuffle       bool
+	showdownCards    []string
 }
 
 type GameState struct {
@@ -49,6 +50,7 @@ type GameState struct {
 	WaitingForInput bool         `json:"waitingForInput"`
 	AskContinue    bool          `json:"askContinue"`
 	AskShuffle     bool          `json:"askShuffle"`
+	ShowdownCards  []string      `json:"showdownCards"`
 }
 
 type ActionData struct {
@@ -66,6 +68,9 @@ type PlayerState struct {
 	AllIn     bool     `json:"allIn"`
 	IsHuman   bool     `json:"isHuman"`
 	IsCurrent bool     `json:"isCurrent"`
+	IsDealer  bool     `json:"isDealer"`
+	IsSmallBlind bool  `json:"isSmallBlind"`
+	IsBigBlind bool    `json:"isBigBlind"`
 }
 
 func NewWebGUIGame() *WebGUIGame {
@@ -94,19 +99,28 @@ func (g *WebGUIGame) getGameState() *GameState {
 		WaitingForInput: g.waitingForInput,
 		AskContinue:     g.askContinue,
 		AskShuffle:      g.askShuffle,
+		ShowdownCards:   g.showdownCards,
 	}
 
-	for _, p := range g.game.Players {
+	numPlayers := len(g.game.Players)
+	dealerPos := g.game.ButtonPos
+	sbPos := (dealerPos + 1) % numPlayers
+	bbPos := (dealerPos + 2) % numPlayers
+
+	for i, p := range g.game.Players {
 		ps := PlayerState{
-			ID:        p.ID,
-			Name:      p.Name,
-			Chips:     p.Chips,
-			Bet:       p.Bet,
-			Folded:    p.Folded,
-			AllIn:     p.AllIn,
-			IsHuman:   p.Name == "你",
-			IsCurrent: p.Name == g.currentPlayerName,
-			Cards:     make([]string, 0, 2),
+			ID:           p.ID,
+			Name:         p.Name,
+			Chips:        p.Chips,
+			Bet:          p.Bet,
+			Folded:       p.Folded,
+			AllIn:        p.AllIn,
+			IsHuman:      p.Name == "你",
+			IsCurrent:    p.Name == g.currentPlayerName,
+			IsDealer:     i == dealerPos,
+			IsSmallBlind: i == sbPos,
+			IsBigBlind:   i == bbPos,
+			Cards:        make([]string, 0, 2),
 		}
 		
 		if p.Name == "你" {
@@ -123,12 +137,16 @@ func (g *WebGUIGame) getGameState() *GameState {
 		state.Players = append(state.Players, ps)
 	}
 
-	for _, c := range g.game.CommunityCards {
-		state.CommunityCards = append(state.CommunityCards, c.ImageFileName())
-	}
+	if len(g.showdownCards) > 0 {
+		state.CommunityCards = g.showdownCards
+	} else {
+		for _, c := range g.game.CommunityCards {
+			state.CommunityCards = append(state.CommunityCards, c.ImageFileName())
+		}
 
-	for len(state.CommunityCards) < 5 {
-		state.CommunityCards = append(state.CommunityCards, "bm.png")
+		for len(state.CommunityCards) < 5 {
+			state.CommunityCards = append(state.CommunityCards, "bm.png")
+		}
 	}
 
 	return state
@@ -272,6 +290,7 @@ func (g *WebGUIGame) playHand() {
 	g.winnerText = ""
 	g.askContinue = false
 	g.askShuffle = false
+	g.showdownCards = nil
 
 	g.game.DealHoleCards()
 	g.currentPhase = "翻牌前"
@@ -447,6 +466,10 @@ func (g *WebGUIGame) showdown() {
 	activePlayers := g.game.getActivePlayers()
 
 	var winnerText string
+	var bestHand Hand
+	var winners []*Player
+	var winnerCards []Card
+
 	if len(activePlayers) == 1 {
 		winner := activePlayers[0]
 		winner.Chips += g.game.Pot
@@ -465,14 +488,16 @@ func (g *WebGUIGame) showdown() {
 			hands = append(hands, playerHand{p, hand})
 		}
 
-		bestHand := hands[0].hand
-		var winners []*Player
+		bestHand = hands[0].hand
+		winners = []*Player{hands[0].player}
+		winnerCards = hands[0].hand.Cards
 
 		for _, ph := range hands {
 			cmp := CompareHands(ph.hand, bestHand)
 			if cmp > 0 {
 				bestHand = ph.hand
 				winners = []*Player{ph.player}
+				winnerCards = ph.hand.Cards
 			} else if cmp == 0 {
 				winners = append(winners, ph.player)
 			}
@@ -493,12 +518,23 @@ func (g *WebGUIGame) showdown() {
 		winnerText += fmt.Sprintf(" 每人赢得 %d 筹码！(牌型: %v)", winAmount, bestHand.Rank)
 	}
 
+	g.showdownCards = make([]string, 0, 5)
+	for _, c := range winnerCards {
+		g.showdownCards = append(g.showdownCards, c.ImageFileName())
+	}
+
 	g.winnerText = winnerText
 	g.gameOver = true
-	g.askContinue = true
+	g.askContinue = false
 	g.currentPlayerName = ""
 
 	g.game.ButtonPos = (g.game.ButtonPos + 1) % len(g.game.Players)
+	g.mu.Unlock()
+
+	time.Sleep(3000 * time.Millisecond)
+
+	g.mu.Lock()
+	g.askContinue = true
 	g.mu.Unlock()
 
 	actionData := <-g.actionChan

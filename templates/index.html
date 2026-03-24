@@ -63,6 +63,47 @@
         .player.folded {
             opacity: 0.5;
         }
+        .player {
+            position: relative;
+        }
+        .dealer-badge {
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            background: #ffd700;
+            color: #000;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 12px;
+            z-index: 10;
+        }
+        .sb-badge, .bb-badge {
+            position: absolute;
+            top: -5px;
+            left: -5px;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 10px;
+            z-index: 10;
+        }
+        .sb-badge {
+            background: #17a2b8;
+            color: white;
+        }
+        .bb-badge {
+            background: #dc3545;
+            color: white;
+        }
         @keyframes pulse {
             0%, 100% { box-shadow: 0 0 10px rgba(0, 255, 0, 0.3); }
             50% { box-shadow: 0 0 20px rgba(0, 255, 0, 0.7); }
@@ -192,7 +233,7 @@
             left: 0;
             right: 0;
             bottom: 0;
-            background: rgba(0,0,0,0.8);
+            background: rgba(0,0,0,0.5);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -367,7 +408,18 @@
                     timerHtml = '<div class="player-timer">⏱ 60s</div>';
                 }
                 
+                let badges = '';
+                if (player.isDealer) {
+                    badges += '<div class="dealer-badge">庄</div>';
+                }
+                if (player.isSmallBlind) {
+                    badges += '<div class="sb-badge">S</div>';
+                }
+                if (player.isBigBlind) {
+                    badges += '<div class="bb-badge">B</div>';
+                }
                 div.innerHTML = `
+                    ${badges}
                     <div class="player-name">${player.name}${player.isCurrent ? ' 👈' : ''}</div>
                     ${timerHtml}
                     <div class="player-chips">💰 ${player.chips}</div>
