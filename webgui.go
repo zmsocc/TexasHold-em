@@ -33,6 +33,7 @@ type WebGUIGame struct {
 	winnerHandRank    string
 	winnerName        string
 	currentUser       *User
+	noChips           bool
 }
 
 type GameState struct {
@@ -56,6 +57,7 @@ type GameState struct {
 	ShowdownCards   []string      `json:"showdownCards"`
 	WinnerHandRank  string        `json:"winnerHandRank"`
 	WinnerName      string        `json:"winnerName"`
+	NoChips         bool          `json:"noChips"`
 }
 
 type ActionData struct {
@@ -167,6 +169,7 @@ func (g *WebGUIGame) getGameState() *GameState {
 		ShowdownCards:   g.showdownCards,
 		WinnerHandRank:  g.winnerHandRank,
 		WinnerName:      g.winnerName,
+		NoChips:         g.noChips,
 	}
 
 	numPlayers := len(g.game.Players)
@@ -330,20 +333,15 @@ func (g *WebGUIGame) handleAction(w http.ResponseWriter, r *http.Request) {
 		action = AllIn
 	case "start":
 		g.mu.Lock()
-		if g.game == nil {
-			rand.Seed(time.Now().UnixNano())
-			numPlayers := rand.Intn(9) + 2
-			humanName := ""
-			if g.currentUser != nil {
-				humanName = g.currentUser.Nickname
-			}
-			g.game = NewGame(numPlayers, 100, humanName)
-			if g.firstGame {
-				g.shufflePlayers()
-				g.firstGame = false
-			}
-			go g.playHand()
+		rand.Seed(time.Now().UnixNano())
+		numPlayers := rand.Intn(9) + 2
+		humanName := ""
+		if g.currentUser != nil {
+			humanName = g.currentUser.Nickname
 		}
+		g.game = NewGame(numPlayers, 100, humanName)
+		g.firstGame = true
+		go g.playHand()
 		g.mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 		return
@@ -524,6 +522,18 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 	betCount := 0
 	firstRoundComplete := false
 	checkCount := 0
+
+	if phase == "翻牌前" {
+		firstRoundComplete = true
+	}
+
+	activeNonAllInCount := 0
+	for _, p := range activePlayers {
+		if !p.AllIn {
+			activeNonAllInCount++
+		}
+	}
+
 	g.mu.Unlock()
 
 	for {
@@ -610,7 +620,7 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 		}
 
 		activePlayers = g.game.getActivePlayers()
-		activeNonAllInCount := 0
+		activeNonAllInCount = 0
 		for _, p := range activePlayers {
 			if !p.AllIn {
 				activeNonAllInCount++
@@ -736,32 +746,48 @@ func (g *WebGUIGame) showdown() {
 		g.winnerName = ""
 	}
 
+	g.noChips = false
+	humanPlayerName := "你"
+	if g.currentUser != nil {
+		humanPlayerName = g.currentUser.Nickname
+	}
+	for _, p := range g.game.Players {
+		if p.Name == humanPlayerName && p.Chips <= 0 {
+			g.noChips = true
+			break
+		}
+	}
+
 	g.game.ButtonPos = (g.game.ButtonPos + 1) % len(g.game.Players)
 	g.mu.Unlock()
 
 	time.Sleep(3000 * time.Millisecond)
 
 	g.mu.Lock()
-	g.askContinue = true
-	g.mu.Unlock()
-
-	actionData := <-g.actionChan
-
-	g.mu.Lock()
-	if actionData.Amount == -1 {
-		g.askContinue = false
-		g.askShuffle = true
-		g.gameOver = false
-		g.mu.Unlock()
-
-		actionData = <-g.actionChan
-
-		g.mu.Lock()
-		if actionData.Amount == -2 {
-		}
-		go g.playHand()
+	if !g.noChips {
+		g.askContinue = true
 	}
 	g.mu.Unlock()
+
+	if !g.noChips {
+		actionData := <-g.actionChan
+
+		g.mu.Lock()
+		if actionData.Amount == -1 {
+			g.askContinue = false
+			g.askShuffle = true
+			g.gameOver = false
+			g.mu.Unlock()
+
+			actionData = <-g.actionChan
+
+			g.mu.Lock()
+			if actionData.Amount == -2 {
+			}
+			go g.playHand()
+		}
+		g.mu.Unlock()
+	}
 }
 
 type User struct {

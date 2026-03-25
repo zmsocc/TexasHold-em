@@ -590,7 +590,9 @@
             
             renderControls(state);
             
-            if (state.gameOver && state.askContinue) {
+            if (state.noChips) {
+                showNoChipsModal();
+            } else if (state.gameOver && state.askContinue) {
                 showContinueModal(state.winnerText);
             } else if (state.askShuffle) {
                 showShuffleModal();
@@ -759,6 +761,22 @@
         function doNoShuffle() {
             doAction('continue');
             hideModal();
+        }
+        
+        function showNoChipsModal() {
+            const modal = document.getElementById('modal');
+            if (modal.style.display === 'flex') return;
+            const content = document.getElementById('modalContent');
+            content.innerHTML = `
+                <div class="winner">您已无筹码，无法继续游戏！</div>
+                <h2>请返回开始界面</h2>
+                <button class="btn btn-start" onclick="resetGame()">确认</button>
+            `;
+            modal.style.display = 'flex';
+        }
+        
+        function resetGame() {
+            window.location.reload();
         }
         
         function hideModal() {

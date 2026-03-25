@@ -349,23 +349,44 @@ func (g *Game) executeAction(player *Player, action Action, raiseAmount int) {
 	case Check:
 		fmt.Printf("%s 过牌\n", player.Name)
 	case Call:
-		player.Call(g.CurrentBet)
-		g.Pot += g.CurrentBet - player.Bet
-		fmt.Printf("%s 跟注 %d 筹码\n", player.Name, g.CurrentBet-player.Bet)
+		callAmount := g.CurrentBet - player.Bet
+		if callAmount > 0 {
+			if player.Chips <= callAmount {
+				callAmount = player.Chips
+				player.AllIn = true
+			}
+			player.Chips -= callAmount
+			player.Bet += callAmount
+			g.Pot += callAmount
+			fmt.Printf("%s 跟注 %d 筹码\n", player.Name, callAmount)
+		} else {
+			fmt.Printf("%s 过牌\n", player.Name)
+		}
 	case Raise:
 		oldBet := player.Bet
-		player.Raise(g.CurrentBet, raiseAmount)
+		totalBet := g.CurrentBet + raiseAmount
+		callAmount := totalBet - oldBet
+		if player.Chips <= callAmount {
+			callAmount = player.Chips
+			player.AllIn = true
+		}
+		player.Chips -= callAmount
+		player.Bet += callAmount
 		g.CurrentBet = player.Bet
-		g.Pot += player.Bet - oldBet
+		g.Pot += callAmount
 		fmt.Printf("%s 加注到 %d 筹码\n", player.Name, g.CurrentBet)
 	case AllIn:
-		oldBet := player.Bet
-		player.GoAllIn()
-		if player.Bet > g.CurrentBet {
-			g.CurrentBet = player.Bet
+		if player.Chips > 0 {
+			callAmount := player.Chips
+			player.Chips = 0
+			player.Bet += callAmount
+			player.AllIn = true
+			if player.Bet > g.CurrentBet {
+				g.CurrentBet = player.Bet
+			}
+			g.Pot += callAmount
+			fmt.Printf("%s 全下 %d 筹码\n", player.Name, callAmount)
 		}
-		g.Pot += player.Bet - oldBet
-		fmt.Printf("%s 全下 %d 筹码\n", player.Name, player.Bet-oldBet)
 	}
 }
 
