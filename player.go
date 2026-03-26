@@ -24,6 +24,7 @@ type Player struct {
 	Bet      int
 	Folded   bool
 	AllIn    bool
+	Bankrupt bool // 破产状态，筹码为0且无法继续游戏
 }
 
 func NewPlayer(id int, name string, chips int) *Player {
@@ -35,6 +36,7 @@ func NewPlayer(id int, name string, chips int) *Player {
 		Bet:       0,
 		Folded:    false,
 		AllIn:     false,
+		Bankrupt:  false,
 	}
 }
 
@@ -47,6 +49,7 @@ func (p *Player) Reset() {
 	p.Bet = 0
 	p.Folded = false
 	p.AllIn = false
+	// 注意：Bankrupt 状态在重置时保持不变，破产玩家继续破产
 }
 
 func (p *Player) Fold() {

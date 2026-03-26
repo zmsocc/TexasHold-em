@@ -570,7 +570,11 @@ func (g *GUIGame) showdown() {
 			}
 			winnerText += w.Name
 		}
-		winnerText += fmt.Sprintf(" 每人赢得 %d 筹码！(牌型: %v)", winAmount, bestHand.Rank)
+		if len(winners) > 1 {
+			winnerText += fmt.Sprintf(" 每人赢得 %d 筹码！(牌型: %v)", winAmount, bestHand.Rank)
+		} else {
+			winnerText += fmt.Sprintf(" 赢得 %d 筹码！(牌型: %v)", g.game.Pot, bestHand.Rank)
+		}
 	}
 	
 	g.statusLabel.SetText(winnerText)

@@ -22,6 +22,7 @@ type Game struct {
 }
 
 func NewGame(numPlayers int, startingChips int, humanPlayerName string) *Game {
+	var user User
 	game := &Game{
 		Players:        make([]*Player, 0, numPlayers),
 		CommunityCards: make([]Card, 0, 5),
@@ -38,7 +39,7 @@ func NewGame(numPlayers int, startingChips int, humanPlayerName string) *Game {
 			if humanPlayerName != "" {
 				name = humanPlayerName
 			} else {
-				name = "你"
+				name = user.Nickname
 			}
 		}
 		game.Players = append(game.Players, NewPlayer(i+1, name, startingChips))
@@ -53,8 +54,42 @@ func (g *Game) NewHand() {
 	g.Pot = 0
 	g.CurrentBet = 0
 	for _, p := range g.Players {
+		// 检查玩家是否破产（筹码为0且未标记为破产）
+		if p.Chips <= 0 && !p.Bankrupt {
+			p.Bankrupt = true
+			fmt.Printf("%s 已破产，无法继续游戏\n", p.Name)
+		}
 		p.Reset()
 	}
+	// 移除所有破产玩家
+	g.removeBankruptPlayers()
+}
+
+func (g *Game) removeBankruptPlayers() {
+	var activePlayers []*Player
+	for _, p := range g.Players {
+		if !p.Bankrupt {
+			activePlayers = append(activePlayers, p)
+		}
+	}
+	g.Players = activePlayers
+	// 如果只剩下一个玩家，游戏结束
+	if len(g.Players) <= 1 {
+		fmt.Println("游戏结束！只剩一个玩家")
+	}
+}
+
+// getNextActivePosition 找到从startPos开始，跳过offset个位置后的下一个未破产玩家位置
+func (g *Game) getNextActivePosition(startPos int, offset int) int {
+	pos := startPos
+	for i := 0; i < offset; i++ {
+		pos = (pos + 1) % len(g.Players)
+		// 跳过破产玩家
+		for g.Players[pos].Bankrupt {
+			pos = (pos + 1) % len(g.Players)
+		}
+	}
+	return pos
 }
 
 func (g *Game) PlayHand() {
@@ -96,8 +131,9 @@ func (g *Game) DealHoleCards() {
 }
 
 func (g *Game) PostBlinds() {
-	sbPos := (g.ButtonPos + 1) % len(g.Players)
-	bbPos := (g.ButtonPos + 2) % len(g.Players)
+	// 找到下一个未破产的小盲注位置
+	sbPos := g.getNextActivePosition(g.ButtonPos, 1)
+	bbPos := g.getNextActivePosition(sbPos, 1)
 
 	sbPlayer := g.Players[sbPos]
 	if sbPlayer.Chips > 0 {
@@ -349,8 +385,12 @@ func (g *Game) executeAction(player *Player, action Action, raiseAmount int) {
 	case Check:
 		fmt.Printf("%s 过牌\n", player.Name)
 	case Call:
+		// 计算需要跟注的金额
 		callAmount := g.CurrentBet - player.Bet
+		fmt.Printf("DEBUG: Call - CurrentBet=%d, player.Bet=%d, callAmount=%d, player.Chips=%d\n",
+			g.CurrentBet, player.Bet, callAmount, player.Chips)
 		if callAmount > 0 {
+			// 如果筹码不够，则全下
 			if player.Chips <= callAmount {
 				callAmount = player.Chips
 				player.AllIn = true
@@ -358,14 +398,14 @@ func (g *Game) executeAction(player *Player, action Action, raiseAmount int) {
 			player.Chips -= callAmount
 			player.Bet += callAmount
 			g.Pot += callAmount
-			fmt.Printf("%s 跟注 %d 筹码\n", player.Name, callAmount)
+			fmt.Printf("%s 跟注 %d 筹码 (剩余筹码: %d, 当前下注: %d, 底池: %d)\n",
+				player.Name, callAmount, player.Chips, player.Bet, g.Pot)
 		} else {
-			fmt.Printf("%s 过牌\n", player.Name)
+			fmt.Printf("%s 过牌 (无需跟注)\n", player.Name)
 		}
 	case Raise:
-		oldBet := player.Bet
 		totalBet := g.CurrentBet + raiseAmount
-		callAmount := totalBet - oldBet
+		callAmount := totalBet - player.Bet
 		if player.Chips <= callAmount {
 			callAmount = player.Chips
 			player.AllIn = true
@@ -376,8 +416,8 @@ func (g *Game) executeAction(player *Player, action Action, raiseAmount int) {
 		g.Pot += callAmount
 		fmt.Printf("%s 加注到 %d 筹码\n", player.Name, g.CurrentBet)
 	case AllIn:
-		if player.Chips > 0 {
-			callAmount := player.Chips
+		callAmount := player.Chips
+		if callAmount > 0 {
 			player.Chips = 0
 			player.Bet += callAmount
 			player.AllIn = true
@@ -416,7 +456,7 @@ func (g *Game) GameOver() bool {
 func (g *Game) getActivePlayers() []*Player {
 	var active []*Player
 	for _, p := range g.Players {
-		if !p.Folded {
+		if !p.Folded && !p.Bankrupt {
 			active = append(active, p)
 		}
 	}
@@ -429,6 +469,13 @@ func (g *Game) Showdown() {
 	fmt.Println(strings.Repeat("=", 50))
 
 	activePlayers := g.getActivePlayers()
+
+	// 如果没有活跃玩家，底池归庄家
+	if len(activePlayers) == 0 {
+		fmt.Println("没有活跃玩家，底池归庄家")
+		g.ButtonPos = (g.ButtonPos + 1) % len(g.Players)
+		return
+	}
 
 	if len(activePlayers) == 1 {
 		winner := activePlayers[0]
@@ -462,9 +509,16 @@ func (g *Game) Showdown() {
 			}
 		}
 
+		// 只有牌型最大的胜者才能平分底池
 		winAmount := g.Pot / len(winners)
-		for _, winner := range winners {
-			winner.Chips += winAmount
+		remainder := g.Pot % len(winners) // 处理除不尽的情况
+
+		for i, winner := range winners {
+			amount := winAmount
+			if i < remainder {
+				amount++ // 前几个胜者多分1个筹码
+			}
+			winner.Chips += amount
 		}
 
 		fmt.Printf("\n\n获胜者: ")
@@ -474,7 +528,12 @@ func (g *Game) Showdown() {
 			}
 			fmt.Print(w.Name)
 		}
-		fmt.Printf(" 每人赢得 %d 筹码！(牌型: %v)\n", winAmount, bestHand.Rank)
+		if len(winners) > 1 {
+			fmt.Print(" (平局)")
+			fmt.Printf(" 每人赢得 %d 筹码！(牌型: %v)\n", winAmount, bestHand.Rank)
+		} else {
+			fmt.Printf(" 赢得 %d 筹码！(牌型: %v)\n", g.Pot, bestHand.Rank)
+		}
 	}
 
 	g.ButtonPos = (g.ButtonPos + 1) % len(g.Players)

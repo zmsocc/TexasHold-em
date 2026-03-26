@@ -183,6 +183,11 @@ func (g *WebGUIGame) getGameState() *GameState {
 	}
 
 	for i, p := range g.game.Players {
+		// 跳过破产玩家
+		if p.Bankrupt {
+			continue
+		}
+
 		ps := PlayerState{
 			ID:           p.ID,
 			Name:         p.Name,
@@ -287,7 +292,7 @@ func (g *WebGUIGame) handleState(w http.ResponseWriter, r *http.Request) {
 	var state *GameState
 	if g.game == nil {
 		state = &GameState{
-			Message: "点击开始游戏",
+			Message: "",
 		}
 	} else {
 		state = g.getGameState()
@@ -332,6 +337,22 @@ func (g *WebGUIGame) handleAction(w http.ResponseWriter, r *http.Request) {
 	case "allin":
 		action = AllIn
 	case "start":
+		g.mu.Lock()
+		g.game = nil
+		g.winnerText = ""
+		g.winnerHandRank = ""
+		g.winnerName = ""
+		g.showdownCards = nil
+		g.gameOver = false
+		g.askContinue = false
+		g.askShuffle = false
+		g.noChips = false
+		g.message = ""
+		g.currentPhase = ""
+		g.currentPlayerName = ""
+		g.waitingForInput = false
+		g.mu.Unlock()
+
 		g.mu.Lock()
 		rand.Seed(time.Now().UnixNano())
 		numPlayers := rand.Intn(9) + 2
@@ -506,9 +527,33 @@ func (g *WebGUIGame) playHand() {
 
 func (g *WebGUIGame) runBettingRound(phase string) {
 	g.mu.Lock()
-	startPos := g.game.ButtonPos + 1
+
+	// 找到第一个活跃玩家作为起始位置
+	numPlayers := len(g.game.Players)
+	startOffset := 1
 	if phase == "翻牌前" {
-		startPos = g.game.ButtonPos + 3
+		startOffset = 3
+	}
+
+	// 从庄家位置开始，找到第startOffset个活跃玩家
+	startPos := -1
+	count := 0
+	for i := 0; i < numPlayers*2; i++ { // 最多遍历两轮
+		pos := (g.game.ButtonPos + 1 + i) % numPlayers
+		player := g.game.Players[pos]
+		if !player.Folded && !player.AllIn && !player.Bankrupt && player.Chips > 0 {
+			count++
+			if count == startOffset {
+				startPos = pos
+				break
+			}
+		}
+	}
+
+	// 如果找不到起始位置，直接返回
+	if startPos == -1 {
+		g.mu.Unlock()
+		return
 	}
 
 	activePlayers := g.game.getActivePlayers()
@@ -518,21 +563,12 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 	}
 
 	lastRaisePos := -1
-	currentPos := startPos % len(g.game.Players)
+	currentPos := startPos
 	betCount := 0
-	firstRoundComplete := false
 	checkCount := 0
 
-	if phase == "翻牌前" {
-		firstRoundComplete = true
-	}
-
-	activeNonAllInCount := 0
-	for _, p := range activePlayers {
-		if !p.AllIn {
-			activeNonAllInCount++
-		}
-	}
+	// 记录每个玩家的动作，用于检测全过牌
+	playerActions := make(map[int]Action)
 
 	g.mu.Unlock()
 
@@ -540,12 +576,25 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 		g.mu.Lock()
 		player := g.game.Players[currentPos]
 
-		if player.Folded || player.AllIn {
+		// 跳过已弃牌、已全下或已破产的玩家
+		if player.Folded || player.AllIn || player.Bankrupt {
 			currentPos = (currentPos + 1) % len(g.game.Players)
 			g.mu.Unlock()
 			continue
 		}
 
+		// 如果玩家筹码为0，自动转为全下状态
+		if player.Chips <= 0 {
+			player.AllIn = true
+			player.Bet = 0
+			g.message = fmt.Sprintf("%s 筹码为0，自动全下", player.Name)
+			currentPos = (currentPos + 1) % len(g.game.Players)
+			g.mu.Unlock()
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+
+		// 如果已经回到最后一个加注者，结束下注轮
 		if lastRaisePos == currentPos && betCount > 0 {
 			g.mu.Unlock()
 			break
@@ -565,7 +614,19 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 		if player.Name == humanPlayerName {
 			g.message = "轮到你了！"
 			g.waitingForInput = true
-			g.canCheck = g.game.CurrentBet == player.Bet
+
+			// 计算当前玩家位置
+			numPlayers := len(g.game.Players)
+			dealerPos := g.game.ButtonPos
+			bbPos := (dealerPos + 2) % numPlayers
+
+			// 翻牌前阶段，大盲位特殊处理：如果无人加注，可以选择过牌
+			canCheckAsBB := false
+			if phase == "翻牌前" && currentPos == bbPos && lastRaisePos == -1 {
+				canCheckAsBB = true
+			}
+
+			g.canCheck = g.game.CurrentBet == player.Bet || canCheckAsBB
 			g.canCall = g.game.CurrentBet > player.Bet && player.Chips > 0
 			g.minRaise = g.game.BigBlind
 			if g.game.CurrentBet > 0 {
@@ -598,6 +659,9 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 			action, raiseAmount = g.game.getAIAction(player)
 		}
 
+		// 记录玩家动作
+		playerActions[currentPos] = action
+
 		g.game.executeAction(player, action, raiseAmount)
 		g.message = fmt.Sprintf("%s 选择了 %s", player.Name, action)
 		g.waitingForInput = false
@@ -606,7 +670,6 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 			lastRaisePos = currentPos
 			betCount++
 			checkCount = 0
-			firstRoundComplete = true
 		} else if action == Check {
 			checkCount++
 		} else if action == Fold {
@@ -616,11 +679,11 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 				break
 			}
 		} else if action == Call {
-			firstRoundComplete = true
+			checkCount = 0 // 跟注后重置过牌计数
 		}
 
 		activePlayers = g.game.getActivePlayers()
-		activeNonAllInCount = 0
+		activeNonAllInCount := 0
 		for _, p := range activePlayers {
 			if !p.AllIn {
 				activeNonAllInCount++
@@ -632,7 +695,33 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 			break
 		}
 
-		if firstRoundComplete && lastRaisePos == -1 && checkCount >= activeNonAllInCount {
+		// 检查是否所有未弃牌、未全下的玩家都过牌了
+		allChecked := true
+		for i, p := range g.game.Players {
+			if !p.Folded && !p.AllIn && !p.Bankrupt {
+				act, hasActed := playerActions[i]
+				if !hasActed || (act != Check && act != Fold) {
+					allChecked = false
+					break
+				}
+			}
+		}
+
+		// 计算大盲位位置
+		numPlayers := len(g.game.Players)
+		dealerPos := g.game.ButtonPos
+		bbPos := (dealerPos + 2) % numPlayers
+
+		// 翻牌前特殊处理：如果大盲位过牌且无人加注，结束下注轮
+		bbChecked := false
+		if phase == "翻牌前" && lastRaisePos == -1 {
+			if act, hasActed := playerActions[bbPos]; hasActed && (act == Check || act == Fold) {
+				bbChecked = true
+			}
+		}
+
+		// 如果所有人都过牌（没有加注），或者大盲位过牌，结束下注轮
+		if (allChecked || bbChecked) && lastRaisePos == -1 && len(playerActions) >= activeNonAllInCount {
 			g.mu.Unlock()
 			break
 		}
@@ -714,7 +803,13 @@ func (g *WebGUIGame) showdown() {
 			}
 			winnerText += w.Name
 		}
-		winnerText += fmt.Sprintf(" 每人赢得 %d 筹码！(牌型: %v)", winAmount, bestHand.Rank)
+
+		// 根据胜者人数显示不同的文本
+		if len(winners) > 1 {
+			winnerText += fmt.Sprintf(" 每人赢得 %d 筹码！(牌型: %v)", winAmount, bestHand.Rank)
+		} else {
+			winnerText += fmt.Sprintf(" 赢得 %d 筹码！(牌型: %v)", g.game.Pot, bestHand.Rank)
+		}
 	}
 
 	sortedCards := make([]Card, len(winnerCards))

@@ -172,6 +172,68 @@
             color: #ffd700;
             text-shadow: 0 0 10px rgba(255, 215, 0, 0.8);
         }
+        .pause-btn {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            padding: 10px 20px;
+            font-size: 16px;
+            background: rgba(255, 215, 0, 0.2);
+            border: 2px solid #ffd700;
+            color: #ffd700;
+            border-radius: 10px;
+            cursor: pointer;
+            z-index: 1000;
+            display: none;
+        }
+        .pause-btn:hover {
+            background: rgba(255, 215, 0, 0.4);
+        }
+        .pause-modal {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.8);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+            border-radius: 200px;
+        }
+        .pause-modal-content {
+            background: #1e3a5f;
+            padding: 40px;
+            border-radius: 20px;
+            text-align: center;
+            border: 2px solid #ffd700;
+        }
+        .pause-modal h2 {
+            color: #ffd700;
+            margin-bottom: 30px;
+        }
+        .table-modal {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.7);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            border-radius: 200px;
+        }
+        .table-modal-content {
+            background: #1e3a5f;
+            padding: 30px;
+            border-radius: 15px;
+            text-align: center;
+            border: 2px solid #ffd700;
+            max-width: 350px;
+        }
         .player-timer {
             color: #ff6b6b;
             font-size: 14px;
@@ -256,7 +318,7 @@
         }
         .message {
             position: absolute;
-            bottom: 12%;
+            bottom: 2%;
             left: 50%;
             transform: translateX(-50%);
             background: rgba(255, 215, 0, 0.2);
@@ -356,6 +418,8 @@
     </style>
 </head>
 <body>
+    <button class="pause-btn" id="pauseBtn" onclick="togglePause()">⏸ 暂停</button>
+    
     <div class="main-container">
         <div class="game-area">
             <div class="container">
@@ -366,8 +430,21 @@
                 <div class="table" id="table">
                     <div class="phase" id="phase">准备开始</div>
                     <div class="pot" id="pot">底池: 0</div>
-                    <div class="community" id="community"></div>
-                    <div class="message" id="message"></div>
+                    <div class="community" id="community" style="display: none;"></div>
+                    <div class="message" id="message" style="display: none;"></div>
+                    <div class="table-modal" id="tableModal" style="display: none;">
+                        <div class="table-modal-content" id="tableModalContent"></div>
+                    </div>
+                    <div class="pause-modal" id="pauseModal">
+                        <div class="pause-modal-content">
+                            <h2>游戏已暂停</h2>
+                            <div style="display: flex; flex-direction: column; gap: 15px; align-items: center;">
+                                <button class="btn btn-start" onclick="togglePause()">继续游戏</button>
+                                <button class="btn btn-start" onclick="restartFromPause()">重新开始</button>
+                                <button class="btn btn-fold" onclick="goToHome()">回到首页</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 
                 <div class="players-bottom" id="playersBottom"></div>
@@ -427,10 +504,6 @@
             </div>
         </div>
     </div>
-    
-    <div class="modal" id="modal" style="display: none;">
-        <div class="modal-content" id="modalContent"></div>
-    </div>
 
     <script>
         let gameState = null;
@@ -439,6 +512,61 @@
         let timerInterval = null;
         let currentTimerStart = null;
         let panelCollapsed = false;
+        let isPaused = false;
+        
+        function togglePause() {
+            isPaused = !isPaused;
+            const pauseModal = document.getElementById('pauseModal');
+            if (isPaused) {
+                pauseModal.style.display = 'flex';
+                // 暂停时停止轮询和计时器
+                if (pollInterval) clearInterval(pollInterval);
+                pollInterval = null;
+                stopTimer();
+            } else {
+                pauseModal.style.display = 'none';
+                // 继续时恢复轮询
+                startPolling();
+            }
+        }
+        
+        function restartFromPause() {
+            // 关闭暂停弹框
+            isPaused = false;
+            document.getElementById('pauseModal').style.display = 'none';
+            // 先停止当前游戏
+            if (pollInterval) clearInterval(pollInterval);
+            pollInterval = null;
+            stopTimer();
+            // 重置游戏状态
+            gameState = null;
+            lastStateHash = '';
+            // 调用开始游戏函数
+            startGame();
+        }
+        
+        function goToHome() {
+            // 关闭暂停弹框
+            isPaused = false;
+            document.getElementById('pauseModal').style.display = 'none';
+            // 停止轮询
+            if (pollInterval) clearInterval(pollInterval);
+            pollInterval = null;
+            stopTimer();
+            // 重置游戏状态
+            gameState = null;
+            lastStateHash = '';
+            // 重置UI到初始状态
+            document.getElementById('phase').textContent = '准备开始';
+            document.getElementById('pot').textContent = '底池: 0';
+            document.getElementById('message').style.display = 'none';
+            document.getElementById('community').style.display = 'none';
+            document.getElementById('community').innerHTML = '';
+            document.getElementById('playersTop').innerHTML = '';
+            document.getElementById('playersBottom').innerHTML = '';
+            document.getElementById('controls').innerHTML = '<button class="btn btn-start" onclick="startGame()">开始游戏</button>';
+            document.getElementById('pauseBtn').style.display = 'none';
+        }
         
         function togglePanel() {
             panelCollapsed = !panelCollapsed;
@@ -458,6 +586,25 @@
         }
         
         function startGame() {
+            // 重置前端状态
+            gameState = null;
+            lastStateHash = '';
+            if (pollInterval) clearInterval(pollInterval);
+            pollInterval = null;
+            stopTimer();
+            
+            // 重置UI
+            document.getElementById('phase').textContent = '准备开始';
+            document.getElementById('pot').textContent = '底池: 0';
+            document.getElementById('message').style.display = 'none';
+            document.getElementById('community').style.display = 'none';
+            document.getElementById('community').innerHTML = '';
+            document.getElementById('playersTop').innerHTML = '';
+            document.getElementById('playersBottom').innerHTML = '';
+            document.getElementById('controls').innerHTML = '';
+            document.getElementById('pauseBtn').style.display = 'block';
+            hideModal();
+            
             fetch('/action', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -523,33 +670,43 @@
         function updateUI(state) {
             document.getElementById('phase').textContent = state.phase || '准备开始';
             document.getElementById('pot').textContent = '底池: ' + (state.pot || 0);
-            document.getElementById('message').textContent = state.message || '';
             
+            const messageDiv = document.getElementById('message');
             const communityDiv = document.getElementById('community');
+            
+            // 如果游戏还没开始，隐藏message和community
+            if (!state.phase || state.phase === '准备开始') {
+                messageDiv.style.display = 'none';
+                communityDiv.style.display = 'none';
+            } else {
+                communityDiv.style.display = 'flex';
+                if (state.message && state.message !== '') {
+                    messageDiv.textContent = state.message;
+                    messageDiv.style.display = 'block';
+                } else {
+                    messageDiv.style.display = 'none';
+                }
+            }
+            
+            // 清空公共牌区域
             communityDiv.innerHTML = '';
             
-            if (state.showdownCards && state.showdownCards.length > 0) {
-                const communitySection = document.createElement('div');
-                communitySection.className = 'community-section';
-                
-                const communityLabel = document.createElement('div');
-                communityLabel.className = 'community-label';
-                communityLabel.textContent = '公共牌：';
-                communitySection.appendChild(communityLabel);
-                
-                const communityCardsRow = document.createElement('div');
-                communityCardsRow.className = 'community-row';
-                (state.communityCards || ['bm.png','bm.png','bm.png','bm.png','bm.png']).forEach(card => {
-                    const img = document.createElement('img');
-                    img.src = '/' + card;
-                    img.className = 'card';
-                    communityCardsRow.appendChild(img);
-                });
-                communitySection.appendChild(communityCardsRow);
-                communityDiv.appendChild(communitySection);
-                
+            // 只显示公共牌（最多5张）
+            const cardsToShow = state.communityCards || ['bm.png','bm.png','bm.png','bm.png','bm.png'];
+            // 限制最多显示5张牌
+            const limitedCards = cardsToShow.slice(0, 5);
+            limitedCards.forEach(card => {
+                const img = document.createElement('img');
+                img.src = '/' + card;
+                img.className = 'card';
+                communityDiv.appendChild(img);
+            });
+            
+            // 摊牌阶段显示胜者牌
+            if (state.phase === '摊牌' && state.showdownCards && state.showdownCards.length > 0) {
                 const winnerSection = document.createElement('div');
                 winnerSection.className = 'community-section';
+                winnerSection.style.marginTop = '10px';
                 
                 const winnerLabel = document.createElement('div');
                 winnerLabel.className = 'community-label';
@@ -572,13 +729,6 @@
                 });
                 winnerSection.appendChild(winnerCardsRow);
                 communityDiv.appendChild(winnerSection);
-            } else {
-                (state.communityCards || ['bm.png','bm.png','bm.png','bm.png','bm.png']).forEach(card => {
-                    const img = document.createElement('img');
-                    img.src = '/' + card;
-                    img.className = 'card';
-                    communityDiv.appendChild(img);
-                });
             }
             
             const allPlayers = state.players || [];
@@ -684,8 +834,8 @@
         }
         
         function showRaiseModal(min, max) {
-            const modal = document.getElementById('modal');
-            const content = document.getElementById('modalContent');
+            const modal = document.getElementById('tableModal');
+            const content = document.getElementById('tableModalContent');
             content.innerHTML = `
                 <h2>加注</h2>
                 <p>范围: ${min} - ${max}</p>
@@ -707,9 +857,9 @@
         }
         
         function showContinueModal(winnerText) {
-            const modal = document.getElementById('modal');
+            const modal = document.getElementById('tableModal');
             if (modal.style.display === 'flex') return;
-            const content = document.getElementById('modalContent');
+            const content = document.getElementById('tableModalContent');
             content.innerHTML = `
                 <div class="winner">${winnerText}</div>
                 <h2>继续下一局？</h2>
@@ -738,9 +888,9 @@
         }
         
         function showShuffleModal() {
-            const modal = document.getElementById('modal');
+            const modal = document.getElementById('tableModal');
             if (modal.style.display === 'flex') return;
-            const content = document.getElementById('modalContent');
+            const content = document.getElementById('tableModalContent');
             content.innerHTML = `
                 <h2>是否更换位置？</h2>
                 <button class="btn btn-start" onclick="doShuffle()">是</button>
@@ -764,9 +914,9 @@
         }
         
         function showNoChipsModal() {
-            const modal = document.getElementById('modal');
+            const modal = document.getElementById('tableModal');
             if (modal.style.display === 'flex') return;
-            const content = document.getElementById('modalContent');
+            const content = document.getElementById('tableModalContent');
             content.innerHTML = `
                 <div class="winner">您已无筹码，无法继续游戏！</div>
                 <h2>请返回开始界面</h2>
@@ -780,7 +930,7 @@
         }
         
         function hideModal() {
-            document.getElementById('modal').style.display = 'none';
+            document.getElementById('tableModal').style.display = 'none';
         }
     </script>
 </body>
