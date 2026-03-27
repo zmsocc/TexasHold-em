@@ -6,246 +6,118 @@ import (
 	"html/template"
 	"math/rand"
 	"net/http"
-	"sync"
 	"time"
 )
 
-type WebGUIGame struct {
-	game              *Game
-	mu                sync.Mutex
-	actionChan        chan ActionData
-	firstGame         bool
-	currentPhase      string
-	currentPlayerName string
-	waitingForInput   bool
-	canCheck          bool
-	canCall           bool
-	canRaise          bool
-	minRaise          int
-	maxRaise          int
-	callAmount        int
-	message           string
-	gameOver          bool
-	winnerText        string
-	askContinue       bool
-	askShuffle        bool
-	showdownCards     []string
-	winnerHandRank    string
-	winnerName        string
-	currentUser       *User
-	noChips           bool
-}
+// type WebGUIGame struct {
+// 	game              *Game
+// 	mu                sync.Mutex
+// 	actionChan        chan ActionData
+// 	firstGame         bool
+// 	currentPhase      string
+// 	currentPlayerName string
+// 	waitingForInput   bool
+// 	canCheck          bool
+// 	canCall           bool
+// 	canRaise          bool
+// 	minRaise          int
+// 	maxRaise          int
+// 	callAmount        int
+// 	message           string
+// 	gameOver          bool
+// 	winnerText        string
+// 	askContinue       bool
+// 	askShuffle        bool
+// 	showdownCards     []string
+// 	winnerHandRank    string
+// 	winnerName        string
+// 	currentUser       *User
+// 	noChips           bool
+// 	roomManager       *RoomManager
+// 	gameMode          string
+// 	aiPlayerCount     int
+// }
 
-type GameState struct {
-	Players         []PlayerState `json:"players"`
-	CommunityCards  []string      `json:"communityCards"`
-	Pot             int           `json:"pot"`
-	Phase           string        `json:"phase"`
-	CurrentPlayer   string        `json:"currentPlayer"`
-	Message         string        `json:"message"`
-	GameOver        bool          `json:"gameOver"`
-	WinnerText      string        `json:"winnerText"`
-	CanCheck        bool          `json:"canCheck"`
-	CanCall         bool          `json:"canCall"`
-	CanRaise        bool          `json:"canRaise"`
-	MinRaise        int           `json:"minRaise"`
-	MaxRaise        int           `json:"maxRaise"`
-	CallAmount      int           `json:"callAmount"`
-	WaitingForInput bool          `json:"waitingForInput"`
-	AskContinue     bool          `json:"askContinue"`
-	AskShuffle      bool          `json:"askShuffle"`
-	ShowdownCards   []string      `json:"showdownCards"`
-	WinnerHandRank  string        `json:"winnerHandRank"`
-	WinnerName      string        `json:"winnerName"`
-	NoChips         bool          `json:"noChips"`
-}
+// type GameState struct {
+// 	Players         []PlayerState `json:"players"`
+// 	CommunityCards  []string      `json:"communityCards"`
+// 	Pot             int           `json:"pot"`
+// 	Phase           string        `json:"phase"`
+// 	CurrentPlayer   string        `json:"currentPlayer"`
+// 	Message         string        `json:"message"`
+// 	GameOver        bool          `json:"gameOver"`
+// 	WinnerText      string        `json:"winnerText"`
+// 	CanCheck        bool          `json:"canCheck"`
+// 	CanCall         bool          `json:"canCall"`
+// 	CanRaise        bool          `json:"canRaise"`
+// 	MinRaise        int           `json:"minRaise"`
+// 	MaxRaise        int           `json:"maxRaise"`
+// 	CallAmount      int           `json:"callAmount"`
+// 	WaitingForInput bool          `json:"waitingForInput"`
+// 	AskContinue     bool          `json:"askContinue"`
+// 	AskShuffle      bool          `json:"askShuffle"`
+// 	ShowdownCards   []string      `json:"showdownCards"`
+// 	WinnerHandRank  string        `json:"winnerHandRank"`
+// 	WinnerName      string        `json:"winnerName"`
+// 	NoChips         bool          `json:"noChips"`
+// }
 
-type ActionData struct {
-	Action Action
-	Amount int
-}
+// type ActionData struct {
+// 	Action Action
+// 	Amount int
+// }
 
-type PlayerState struct {
-	ID           int      `json:"id"`
-	Name         string   `json:"name"`
-	Chips        int      `json:"chips"`
-	Cards        []string `json:"cards"`
-	Bet          int      `json:"bet"`
-	Folded       bool     `json:"folded"`
-	AllIn        bool     `json:"allIn"`
-	IsHuman      bool     `json:"isHuman"`
-	IsCurrent    bool     `json:"isCurrent"`
-	IsDealer     bool     `json:"isDealer"`
-	IsSmallBlind bool     `json:"isSmallBlind"`
-	IsBigBlind   bool     `json:"isBigBlind"`
-}
+// type PlayerState struct {
+// 	ID           int      `json:"id"`
+// 	Name         string   `json:"name"`
+// 	Chips        int      `json:"chips"`
+// 	Cards        []string `json:"cards"`
+// 	Bet          int      `json:"bet"`
+// 	Folded       bool     `json:"folded"`
+// 	AllIn        bool     `json:"allIn"`
+// 	IsHuman      bool     `json:"isHuman"`
+// 	IsCurrent    bool     `json:"isCurrent"`
+// 	IsDealer     bool     `json:"isDealer"`
+// 	IsSmallBlind bool     `json:"isSmallBlind"`
+// 	IsBigBlind   bool     `json:"isBigBlind"`
+// }
 
-func NewWebGUIGame() *WebGUIGame {
-	return &WebGUIGame{
-		actionChan: make(chan ActionData, 1),
-		firstGame:  true,
-	}
-}
-
-func getRankOrder(rank Rank) int {
-	switch rank {
-	case Ace:
-		return 14
-	case King:
-		return 13
-	case Queen:
-		return 12
-	case Jack:
-		return 11
-	case Ten:
-		return 10
-	case Nine:
-		return 9
-	case Eight:
-		return 8
-	case Seven:
-		return 7
-	case Six:
-		return 6
-	case Five:
-		return 5
-	case Four:
-		return 4
-	case Three:
-		return 3
-	case Two:
-		return 2
-	default:
-		return 0
-	}
-}
-
-func getHandRankName(rank HandRank) string {
-	switch rank {
-	case RoyalFlush:
-		return "皇家同花顺"
-	case StraightFlush:
-		return "同花顺"
-	case FourOfKind:
-		return "四条"
-	case FullHouse:
-		return "满堂红"
-	case Flush:
-		return "同花"
-	case Straight:
-		return "顺子"
-	case ThreeOfKind:
-		return "三条"
-	case TwoPair:
-		return "两对"
-	case OnePair:
-		return "一对"
-	case HighCard:
-		return "高牌"
-	default:
-		return ""
-	}
-}
-
-func (g *WebGUIGame) getGameState() *GameState {
-	state := &GameState{
-		Players:         make([]PlayerState, 0, len(g.game.Players)),
-		CommunityCards:  make([]string, 0, len(g.game.CommunityCards)),
-		Pot:             g.game.Pot,
-		Phase:           g.currentPhase,
-		CurrentPlayer:   g.currentPlayerName,
-		Message:         g.message,
-		GameOver:        g.gameOver,
-		WinnerText:      g.winnerText,
-		CanCheck:        g.canCheck,
-		CanCall:         g.canCall,
-		CanRaise:        g.canRaise,
-		MinRaise:        g.minRaise,
-		MaxRaise:        g.maxRaise,
-		CallAmount:      g.callAmount,
-		WaitingForInput: g.waitingForInput,
-		AskContinue:     g.askContinue,
-		AskShuffle:      g.askShuffle,
-		ShowdownCards:   g.showdownCards,
-		WinnerHandRank:  g.winnerHandRank,
-		WinnerName:      g.winnerName,
-		NoChips:         g.noChips,
-	}
-
-	numPlayers := len(g.game.Players)
-	dealerPos := g.game.ButtonPos
-	sbPos := (dealerPos + 1) % numPlayers
-	bbPos := (dealerPos + 2) % numPlayers
-
-	humanPlayerName := "你"
-	if g.currentUser != nil {
-		humanPlayerName = g.currentUser.Nickname
-	}
-
-	for i, p := range g.game.Players {
-		// 跳过破产玩家
-		if p.Bankrupt {
-			continue
-		}
-
-		ps := PlayerState{
-			ID:           p.ID,
-			Name:         p.Name,
-			Chips:        p.Chips,
-			Bet:          p.Bet,
-			Folded:       p.Folded,
-			AllIn:        p.AllIn,
-			IsHuman:      p.Name == humanPlayerName,
-			IsCurrent:    p.Name == g.currentPlayerName,
-			IsDealer:     i == dealerPos,
-			IsSmallBlind: i == sbPos,
-			IsBigBlind:   i == bbPos,
-			Cards:        make([]string, 0, 2),
-		}
-
-		if p.Name == humanPlayerName {
-			for _, c := range p.HoleCards {
-				ps.Cards = append(ps.Cards, c.ImageFileName())
-			}
-		} else if !p.Folded && g.currentPhase == "摊牌" {
-			for _, c := range p.HoleCards {
-				ps.Cards = append(ps.Cards, c.ImageFileName())
-			}
-		} else {
-			ps.Cards = append(ps.Cards, "bm.png", "bm.png")
-		}
-		state.Players = append(state.Players, ps)
-	}
-
-	for _, c := range g.game.CommunityCards {
-		state.CommunityCards = append(state.CommunityCards, c.ImageFileName())
-	}
-
-	for len(state.CommunityCards) < 5 {
-		state.CommunityCards = append(state.CommunityCards, "bm.png")
-	}
-
-	return state
-}
+// func NewWebGUIGame() *WebGUIGame {
+// 	return &WebGUIGame{
+// 		actionChan:    make(chan ActionData, 1),
+// 		firstGame:     true,
+// 		roomManager:   NewRoomManager(),
+// 		gameMode:      "ai",
+// 		aiPlayerCount: 6,
+// 	}
+// }
 
 func (g *WebGUIGame) Run() {
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	// 主页 - 需要JWT认证
+	http.HandleFunc("/", g.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
 			return
 		}
-		if g.checkAuth(r) == nil {
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
-			return
-		}
 		g.handleIndex(w, r)
-	})
+	}))
+
+	// 登录注册页面 - 不需要认证
 	http.HandleFunc("/login", g.handleLoginPage)
 	http.HandleFunc("/register", g.handleRegisterPage)
+
+	// API接口
+	http.HandleFunc("/api/captcha", HandleCaptcha)
 	http.HandleFunc("/api/login", g.handleLoginAPI)
 	http.HandleFunc("/api/register", g.handleRegisterAPI)
-	http.HandleFunc("/state", g.handleState)
-	http.HandleFunc("/action", g.handleAction)
+	http.HandleFunc("/api/logout", g.authMiddleware(g.handleLogoutAPI))
+	http.HandleFunc("/api/refresh", g.handleRefreshToken)
+
+	// 游戏相关API - 需要认证
+	http.HandleFunc("/state", g.authMiddleware(g.handleState))
+	http.HandleFunc("/action", g.authMiddleware(g.handleAction))
+
+	// 静态资源
 	http.Handle("/puke-img/", http.StripPrefix("/puke-img/", http.FileServer(http.Dir("puke-img"))))
 	http.HandleFunc("/bm.png", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "bm.png")
@@ -263,13 +135,100 @@ func (g *WebGUIGame) Run() {
 	http.ListenAndServe(":8080", nil)
 }
 
-func (g *WebGUIGame) handleIndex(w http.ResponseWriter, r *http.Request) {
-	user := g.checkAuth(r)
-	if user != nil {
+// authMiddleware JWT认证中间件
+func (g *WebGUIGame) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// 从Cookie或Header获取token
+		var tokenString string
+
+		// 先尝试从Cookie获取
+		if cookie, err := r.Cookie("access_token"); err == nil {
+			tokenString = cookie.Value
+		}
+
+		// 如果没有，尝试从Authorization Header获取
+		if tokenString == "" {
+			authHeader := r.Header.Get("Authorization")
+			if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+				tokenString = authHeader[7:]
+			}
+		}
+
+		if tokenString == "" {
+			// 如果是API请求，返回401
+			if r.URL.Path[:4] == "/api" || r.URL.Path == "/state" || r.URL.Path == "/action" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"success": false,
+					"message": "未登录或登录已过期",
+				})
+				return
+			}
+			// 页面请求重定向到登录页
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+
+		claims, err := ParseAccessToken(tokenString)
+		if err != nil {
+			// Token无效或过期
+			if r.URL.Path[:4] == "/api" || r.URL.Path == "/state" || r.URL.Path == "/action" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"success": false,
+					"message": "登录已过期，请重新登录",
+				})
+				return
+			}
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+
+		// 获取用户信息
+		user, err := GetUserByID(claims.UserID)
+		if err != nil || user == nil {
+			if r.URL.Path[:4] == "/api" || r.URL.Path == "/state" || r.URL.Path == "/action" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"success": false,
+					"message": "用户不存在",
+				})
+				return
+			}
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+
+		// 将用户信息存入上下文
 		g.mu.Lock()
 		g.currentUser = user
 		g.mu.Unlock()
+
+		next(w, r)
 	}
+}
+
+// rateLimitMiddleware 限流中间件
+func (g *WebGUIGame) rateLimitMiddleware(limiter *RateLimiter, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		clientIP := GetClientIP(r)
+		if !limiter.Allow(clientIP) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "请求过于频繁，请稍后再试",
+			})
+			return
+		}
+		next(w, r)
+	}
+}
+
+func (g *WebGUIGame) handleIndex(w http.ResponseWriter, r *http.Request) {
 	tmpl, err := template.ParseFiles("templates/index.html")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -278,14 +237,395 @@ func (g *WebGUIGame) handleIndex(w http.ResponseWriter, r *http.Request) {
 	tmpl.Execute(w, nil)
 }
 
-func (g *WebGUIGame) handleState(w http.ResponseWriter, r *http.Request) {
-	user := g.checkAuth(r)
-	if user != nil {
-		g.mu.Lock()
-		g.currentUser = user
-		g.mu.Unlock()
+func (g *WebGUIGame) handleLoginPage(w http.ResponseWriter, r *http.Request) {
+	// 检查是否已登录
+	if cookie, err := r.Cookie("access_token"); err == nil {
+		if _, err := ParseAccessToken(cookie.Value); err == nil {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
 	}
 
+	tmpl, err := template.ParseFiles("templates/login.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tmpl.Execute(w, nil)
+}
+
+func (g *WebGUIGame) handleRegisterPage(w http.ResponseWriter, r *http.Request) {
+	// 检查是否已登录
+	if cookie, err := r.Cookie("access_token"); err == nil {
+		if _, err := ParseAccessToken(cookie.Value); err == nil {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+	}
+
+	tmpl, err := template.ParseFiles("templates/register.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tmpl.Execute(w, nil)
+}
+
+func (g *WebGUIGame) handleLoginAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"success":false,"message":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Captcha  string `json:"captcha"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "无效的请求",
+		})
+		return
+	}
+
+	// 验证验证码
+	clientIP := GetClientIP(r)
+	if !VerifyCaptcha(clientIP, req.Captcha) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "验证码错误或已过期",
+		})
+		return
+	}
+
+	// 检查登录限流
+	allowed, remaining, waitTime := loginLimiter.AllowWithCount(clientIP)
+	if !allowed {
+		minutes := int(waitTime.Seconds()) / 60
+		seconds := int(waitTime.Seconds()) % 60
+		var waitStr string
+		if minutes > 0 {
+			waitStr = fmt.Sprintf("%d分%d秒", minutes, seconds)
+		} else {
+			waitStr = fmt.Sprintf("%d秒", seconds)
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": fmt.Sprintf("登录次数过多，请等待%s后再试", waitStr),
+		})
+		return
+	}
+
+	var user *User
+	var err error
+
+	if db != nil {
+		user, err = GetUserByNickname(req.Username)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "数据库错误",
+			})
+			return
+		}
+		if user == nil {
+			user, err = GetUserByEmail(req.Username)
+			if err != nil {
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"success": false,
+					"message": "数据库错误",
+				})
+				return
+			}
+		}
+	} else {
+		usersMu.Lock()
+		defer usersMu.Unlock()
+
+		if u, ok := users[req.Username]; ok && CheckPassword(req.Password, u.Password) {
+			user = u
+		} else {
+			for _, u := range users {
+				if u.Email == req.Username && CheckPassword(req.Password, u.Password) {
+					user = u
+					break
+				}
+			}
+		}
+	}
+
+	if user == nil || !CheckPassword(req.Password, user.Password) {
+		// 登录失败，显示剩余次数
+		var message string
+		if remaining > 0 {
+			message = fmt.Sprintf("账号或密码错误，剩余尝试次数：%d", remaining)
+		} else {
+			message = "账号或密码错误，本次为最后一次尝试机会"
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": message,
+		})
+		return
+	}
+
+	// 生成双Token
+	tokenPair, err := GenerateTokenPair(user.ID, user.Nickname)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "生成Token失败",
+		})
+		return
+	}
+
+	// 设置Cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "access_token",
+		Value:    tokenPair.AccessToken,
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   int(AccessTokenExpiry.Seconds()),
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     "refresh_token",
+		Value:    tokenPair.RefreshToken,
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   int(RefreshTokenExpiry.Seconds()),
+	})
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "登录成功",
+	})
+}
+
+func (g *WebGUIGame) handleRegisterAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"success":false,"message":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Nickname string `json:"nickname"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
+		Captcha  string `json:"captcha"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "无效的请求",
+		})
+		return
+	}
+
+	// 验证验证码
+	clientIP := GetClientIP(r)
+	if !VerifyCaptcha(clientIP, req.Captcha) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "验证码错误或已过期",
+		})
+		return
+	}
+
+	// 检查注册限流（仅成功时计数，但先检查是否超过限制）
+	allowed, remaining := registerLimiter.Check(clientIP)
+	if !allowed {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "注册次数过多，请稍后再试",
+		})
+		return
+	}
+
+	// 密码加密
+	hashedPassword, err := HashPassword(req.Password)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "密码加密失败",
+		})
+		return
+	}
+
+	if db != nil {
+		exists, err := CheckNicknameExists(req.Nickname)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "数据库错误",
+			})
+			return
+		}
+		if exists {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "昵称已存在",
+			})
+			return
+		}
+
+		exists, err = CheckEmailExists(req.Email)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "数据库错误",
+			})
+			return
+		}
+		if exists {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "邮箱已被注册",
+			})
+			return
+		}
+
+		_, err = CreateUser(req.Nickname, req.Email, hashedPassword)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "创建用户失败",
+			})
+			return
+		}
+	} else {
+		usersMu.Lock()
+		defer usersMu.Unlock()
+
+		if _, ok := users[req.Nickname]; ok {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "昵称已存在",
+			})
+			return
+		}
+
+		for _, u := range users {
+			if u.Email == req.Email {
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"success": false,
+					"message": "邮箱已被注册",
+				})
+				return
+			}
+		}
+
+		user := &User{
+			ID:       nextUserID,
+			Nickname: req.Nickname,
+			Email:    req.Email,
+			Password: hashedPassword,
+		}
+		nextUserID++
+		users[req.Nickname] = user
+		usersByID[user.ID] = user
+	}
+
+	// 注册成功，记录到限流器
+	registerLimiter.RecordSuccess(clientIP)
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": fmt.Sprintf("注册成功，今日还可注册%d个账号", remaining-1),
+	})
+}
+
+func (g *WebGUIGame) handleLogoutAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"success":false,"message":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 获取refresh token并加入黑名单
+	if cookie, err := r.Cookie("refresh_token"); err == nil {
+		BlacklistRefreshToken(cookie.Value)
+	}
+
+	// 清除Cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "access_token",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   -1,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     "refresh_token",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   -1,
+	})
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "登出成功",
+	})
+}
+
+func (g *WebGUIGame) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"success":false,"message":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 获取refresh token
+	var refreshToken string
+	if cookie, err := r.Cookie("refresh_token"); err == nil {
+		refreshToken = cookie.Value
+	}
+
+	if refreshToken == "" {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "未提供Refresh Token",
+		})
+		return
+	}
+
+	// 刷新token
+	tokenPair, err := RefreshAccessToken(refreshToken)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "Refresh Token无效或已过期",
+		})
+		return
+	}
+
+	// 设置新Cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "access_token",
+		Value:    tokenPair.AccessToken,
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   int(AccessTokenExpiry.Seconds()),
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     "refresh_token",
+		Value:    tokenPair.RefreshToken,
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   int(RefreshTokenExpiry.Seconds()),
+	})
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Token刷新成功",
+	})
+}
+
+func (g *WebGUIGame) handleState(w http.ResponseWriter, r *http.Request) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -306,13 +646,6 @@ func (g *WebGUIGame) handleAction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
-	}
-
-	user := g.checkAuth(r)
-	if user != nil {
-		g.mu.Lock()
-		g.currentUser = user
-		g.mu.Unlock()
 	}
 
 	var actionReq struct {
@@ -355,7 +688,12 @@ func (g *WebGUIGame) handleAction(w http.ResponseWriter, r *http.Request) {
 
 		g.mu.Lock()
 		rand.Seed(time.Now().UnixNano())
-		numPlayers := rand.Intn(9) + 2
+
+		numPlayers := g.aiPlayerCount
+		if actionReq.Amount >= 2 && actionReq.Amount <= 10 {
+			numPlayers = actionReq.Amount
+		}
+
 		humanName := ""
 		if g.currentUser != nil {
 			humanName = g.currentUser.Nickname
@@ -364,6 +702,15 @@ func (g *WebGUIGame) handleAction(w http.ResponseWriter, r *http.Request) {
 		g.firstGame = true
 		go g.playHand()
 		g.mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		return
+	case "set_ai_count":
+		if actionReq.Amount >= 2 && actionReq.Amount <= 10 {
+			g.mu.Lock()
+			g.aiPlayerCount = actionReq.Amount
+			g.gameMode = "ai"
+			g.mu.Unlock()
+		}
 		w.WriteHeader(http.StatusOK)
 		return
 	case "continue":
@@ -395,6 +742,7 @@ func (g *WebGUIGame) handleAction(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// 其他辅助函数...
 func (g *WebGUIGame) shufflePlayers() {
 	rand.Seed(time.Now().UnixNano())
 	rand.Shuffle(len(g.game.Players), func(i, j int) {
@@ -528,17 +876,15 @@ func (g *WebGUIGame) playHand() {
 func (g *WebGUIGame) runBettingRound(phase string) {
 	g.mu.Lock()
 
-	// 找到第一个活跃玩家作为起始位置
 	numPlayers := len(g.game.Players)
 	startOffset := 1
 	if phase == "翻牌前" {
 		startOffset = 3
 	}
 
-	// 从庄家位置开始，找到第startOffset个活跃玩家
 	startPos := -1
 	count := 0
-	for i := 0; i < numPlayers*2; i++ { // 最多遍历两轮
+	for i := 0; i < numPlayers*2; i++ {
 		pos := (g.game.ButtonPos + 1 + i) % numPlayers
 		player := g.game.Players[pos]
 		if !player.Folded && !player.AllIn && !player.Bankrupt && player.Chips > 0 {
@@ -550,7 +896,6 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 		}
 	}
 
-	// 如果找不到起始位置，直接返回
 	if startPos == -1 {
 		g.mu.Unlock()
 		return
@@ -567,7 +912,6 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 	betCount := 0
 	checkCount := 0
 
-	// 记录每个玩家的动作，用于检测全过牌
 	playerActions := make(map[int]Action)
 
 	g.mu.Unlock()
@@ -576,14 +920,12 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 		g.mu.Lock()
 		player := g.game.Players[currentPos]
 
-		// 跳过已弃牌、已全下或已破产的玩家
 		if player.Folded || player.AllIn || player.Bankrupt {
 			currentPos = (currentPos + 1) % len(g.game.Players)
 			g.mu.Unlock()
 			continue
 		}
 
-		// 如果玩家筹码为0，自动转为全下状态
 		if player.Chips <= 0 {
 			player.AllIn = true
 			player.Bet = 0
@@ -594,7 +936,6 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 			continue
 		}
 
-		// 如果已经回到最后一个加注者，结束下注轮
 		if lastRaisePos == currentPos && betCount > 0 {
 			g.mu.Unlock()
 			break
@@ -615,12 +956,10 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 			g.message = "轮到你了！"
 			g.waitingForInput = true
 
-			// 计算当前玩家位置
 			numPlayers := len(g.game.Players)
 			dealerPos := g.game.ButtonPos
 			bbPos := (dealerPos + 2) % numPlayers
 
-			// 翻牌前阶段，大盲位特殊处理：如果无人加注，可以选择过牌
 			canCheckAsBB := false
 			if phase == "翻牌前" && currentPos == bbPos && lastRaisePos == -1 {
 				canCheckAsBB = true
@@ -659,7 +998,6 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 			action, raiseAmount = g.game.getAIAction(player)
 		}
 
-		// 记录玩家动作
 		playerActions[currentPos] = action
 
 		g.game.executeAction(player, action, raiseAmount)
@@ -679,7 +1017,7 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 				break
 			}
 		} else if action == Call {
-			checkCount = 0 // 跟注后重置过牌计数
+			checkCount = 0
 		}
 
 		activePlayers = g.game.getActivePlayers()
@@ -695,7 +1033,6 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 			break
 		}
 
-		// 检查是否所有未弃牌、未全下的玩家都过牌了
 		allChecked := true
 		for i, p := range g.game.Players {
 			if !p.Folded && !p.AllIn && !p.Bankrupt {
@@ -707,12 +1044,10 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 			}
 		}
 
-		// 计算大盲位位置
 		numPlayers := len(g.game.Players)
 		dealerPos := g.game.ButtonPos
 		bbPos := (dealerPos + 2) % numPlayers
 
-		// 翻牌前特殊处理：如果大盲位过牌且无人加注，结束下注轮
 		bbChecked := false
 		if phase == "翻牌前" && lastRaisePos == -1 {
 			if act, hasActed := playerActions[bbPos]; hasActed && (act == Check || act == Fold) {
@@ -720,7 +1055,6 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 			}
 		}
 
-		// 如果所有人都过牌（没有加注），或者大盲位过牌，结束下注轮
 		if (allChecked || bbChecked) && lastRaisePos == -1 && len(playerActions) >= activeNonAllInCount {
 			g.mu.Unlock()
 			break
@@ -804,7 +1138,6 @@ func (g *WebGUIGame) showdown() {
 			winnerText += w.Name
 		}
 
-		// 根据胜者人数显示不同的文本
 		if len(winners) > 1 {
 			winnerText += fmt.Sprintf(" 每人赢得 %d 筹码！(牌型: %v)", winAmount, bestHand.Rank)
 		} else {
@@ -885,229 +1218,157 @@ func (g *WebGUIGame) showdown() {
 	}
 }
 
-type User struct {
-	ID       int
-	Nickname string
-	Email    string
-	Password string
-}
-
-var (
-	users      = make(map[string]*User)
-	usersByID  = make(map[int]*User)
-	nextUserID = 1
-	sessions   = make(map[string]*User)
-	sessionMu  sync.Mutex
-)
-
-func (g *WebGUIGame) handleLoginPage(w http.ResponseWriter, r *http.Request) {
-	tmpl, err := template.ParseFiles("templates/login.html")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	tmpl.Execute(w, nil)
-}
-
-func (g *WebGUIGame) handleRegisterPage(w http.ResponseWriter, r *http.Request) {
-	tmpl, err := template.ParseFiles("templates/register.html")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	tmpl.Execute(w, nil)
-}
-
-func (g *WebGUIGame) handleLoginAPI(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
+func (g *WebGUIGame) getGameState() *GameState {
+	state := &GameState{
+		Players:         make([]PlayerState, 0, len(g.game.Players)),
+		CommunityCards:  make([]string, 0, len(g.game.CommunityCards)),
+		Pot:             g.game.Pot,
+		Phase:           g.currentPhase,
+		CurrentPlayer:   g.currentPlayerName,
+		Message:         g.message,
+		GameOver:        g.gameOver,
+		WinnerText:      g.winnerText,
+		CanCheck:        g.canCheck,
+		CanCall:         g.canCall,
+		CanRaise:        g.canRaise,
+		MinRaise:        g.minRaise,
+		MaxRaise:        g.maxRaise,
+		CallAmount:      g.callAmount,
+		WaitingForInput: g.waitingForInput,
+		AskContinue:     g.askContinue,
+		AskShuffle:      g.askShuffle,
+		ShowdownCards:   g.showdownCards,
+		WinnerHandRank:  g.winnerHandRank,
+		WinnerName:      g.winnerName,
+		NoChips:         g.noChips,
 	}
 
-	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": false,
-			"message": "无效的请求",
-		})
-		return
+	numPlayers := len(g.game.Players)
+	dealerPos := g.game.ButtonPos
+	sbPos := (dealerPos + 1) % numPlayers
+	bbPos := (dealerPos + 2) % numPlayers
+
+	humanPlayerName := "你"
+	if g.currentUser != nil {
+		humanPlayerName = g.currentUser.Nickname
 	}
 
-	var user *User
-	var err error
-
-	if db != nil {
-		user, err = GetUserByNickname(req.Username)
-		if err != nil {
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": false,
-				"message": "数据库错误",
-			})
-			return
+	for i, p := range g.game.Players {
+		if p.Bankrupt {
+			continue
 		}
-		if user == nil {
-			user, err = GetUserByEmail(req.Username)
-			if err != nil {
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"success": false,
-					"message": "数据库错误",
-				})
-				return
+
+		ps := PlayerState{
+			ID:           p.ID,
+			Name:         p.Name,
+			Chips:        p.Chips,
+			Bet:          p.Bet,
+			Folded:       p.Folded,
+			AllIn:        p.AllIn,
+			IsHuman:      p.Name == humanPlayerName,
+			IsCurrent:    p.Name == g.currentPlayerName,
+			IsDealer:     i == dealerPos,
+			IsSmallBlind: i == sbPos,
+			IsBigBlind:   i == bbPos,
+			Cards:        make([]string, 0, 2),
+		}
+
+		if p.Name == humanPlayerName {
+			for _, c := range p.HoleCards {
+				ps.Cards = append(ps.Cards, c.ImageFileName())
 			}
-		}
-	} else {
-		sessionMu.Lock()
-		defer sessionMu.Unlock()
-
-		if u, ok := users[req.Username]; ok && u.Password == req.Password {
-			user = u
+		} else if !p.Folded && g.currentPhase == "摊牌" {
+			for _, c := range p.HoleCards {
+				ps.Cards = append(ps.Cards, c.ImageFileName())
+			}
 		} else {
-			for _, u := range users {
-				if u.Email == req.Username && u.Password == req.Password {
-					user = u
-					break
-				}
-			}
+			ps.Cards = append(ps.Cards, "bm.png", "bm.png")
 		}
+		state.Players = append(state.Players, ps)
 	}
 
-	if user == nil || user.Password != req.Password {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": false,
-			"message": "账号或密码错误",
-		})
-		return
+	for _, c := range g.game.CommunityCards {
+		state.CommunityCards = append(state.CommunityCards, c.ImageFileName())
 	}
 
-	sessionMu.Lock()
-	sessionID := fmt.Sprintf("%d", time.Now().UnixNano())
-	sessions[sessionID] = user
-	sessionMu.Unlock()
+	for len(state.CommunityCards) < 5 {
+		state.CommunityCards = append(state.CommunityCards, "bm.png")
+	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "session_id",
-		Value:    sessionID,
-		Path:     "/",
-		HttpOnly: true,
-		MaxAge:   86400,
-	})
-
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-	})
+	return state
 }
 
-func (g *WebGUIGame) handleRegisterAPI(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+// 全局变量
+// var (
+// 	users      = make(map[string]*User)
+// 	usersByID  = make(map[int]*User)
+// 	nextUserID = 1
+// 	usersMu    sync.Mutex
+// )
 
-	var req struct {
-		Nickname string `json:"nickname"`
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": false,
-			"message": "无效的请求",
-		})
-		return
-	}
+// type User struct {
+// 	ID       int
+// 	Nickname string
+// 	Email    string
+// 	Password string
+// }
 
-	if db != nil {
-		exists, err := CheckNicknameExists(req.Nickname)
-		if err != nil {
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": false,
-				"message": "数据库错误",
-			})
-			return
-		}
-		if exists {
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": false,
-				"message": "昵称已存在",
-			})
-			return
-		}
+// func getRankOrder(rank Rank) int {
+// 	switch rank {
+// 	case Ace:
+// 		return 14
+// 	case King:
+// 		return 13
+// 	case Queen:
+// 		return 12
+// 	case Jack:
+// 		return 11
+// 	case Ten:
+// 		return 10
+// 	case Nine:
+// 		return 9
+// 	case Eight:
+// 		return 8
+// 	case Seven:
+// 		return 7
+// 	case Six:
+// 		return 6
+// 	case Five:
+// 		return 5
+// 	case Four:
+// 		return 4
+// 	case Three:
+// 		return 3
+// 	case Two:
+// 		return 2
+// 	default:
+// 		return 0
+// 	}
+// }
 
-		exists, err = CheckEmailExists(req.Email)
-		if err != nil {
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": false,
-				"message": "数据库错误",
-			})
-			return
-		}
-		if exists {
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": false,
-				"message": "邮箱已被注册",
-			})
-			return
-		}
-
-		_, err = CreateUser(req.Nickname, req.Email, req.Password)
-		if err != nil {
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": false,
-				"message": "创建用户失败",
-			})
-			return
-		}
-	} else {
-		sessionMu.Lock()
-		defer sessionMu.Unlock()
-
-		if _, ok := users[req.Nickname]; ok {
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": false,
-				"message": "昵称已存在",
-			})
-			return
-		}
-
-		for _, u := range users {
-			if u.Email == req.Email {
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"success": false,
-					"message": "邮箱已被注册",
-				})
-				return
-			}
-		}
-
-		user := &User{
-			ID:       nextUserID,
-			Nickname: req.Nickname,
-			Email:    req.Email,
-			Password: req.Password,
-		}
-		nextUserID++
-		users[req.Nickname] = user
-		usersByID[user.ID] = user
-	}
-
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-	})
-}
-
-func (g *WebGUIGame) checkAuth(r *http.Request) *User {
-	cookie, err := r.Cookie("session_id")
-	if err != nil {
-		return nil
-	}
-
-	sessionMu.Lock()
-	defer sessionMu.Unlock()
-
-	return sessions[cookie.Value]
-}
+// func getHandRankName(rank HandRank) string {
+// 	switch rank {
+// 	case RoyalFlush:
+// 		return "皇家同花顺"
+// 	case StraightFlush:
+// 		return "同花顺"
+// 	case FourOfKind:
+// 		return "四条"
+// 	case FullHouse:
+// 		return "满堂红"
+// 	case Flush:
+// 		return "同花"
+// 	case Straight:
+// 		return "顺子"
+// 	case ThreeOfKind:
+// 		return "三条"
+// 	case TwoPair:
+// 		return "两对"
+// 	case OnePair:
+// 		return "一对"
+// 	case HighCard:
+// 		return "高牌"
+// 	default:
+// 		return ""
+// 	}
+// }

@@ -51,6 +51,31 @@
         input::placeholder {
             color: rgba(255, 255, 255, 0.5);
         }
+        .captcha-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .captcha-group input {
+            flex: 1;
+        }
+        .captcha-img {
+            width: 120px;
+            height: 40px;
+            border-radius: 8px;
+            cursor: pointer;
+            background: rgba(255, 255, 255, 0.1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.7);
+        }
+        .captcha-img img {
+            width: 100%;
+            height: 100%;
+            border-radius: 8px;
+        }
         .btn {
             width: 100%;
             padding: 12px;
@@ -119,6 +144,15 @@
                 <label>确认密码</label>
                 <input type="password" id="confirmPassword" placeholder="请再次输入密码" required>
             </div>
+            <div class="form-group">
+                <label>验证码</label>
+                <div class="captcha-group">
+                    <input type="text" id="captcha" placeholder="请输入验证码" required maxlength="4">
+                    <div class="captcha-img" id="captchaImg" onclick="refreshCaptcha()" title="点击刷新">
+                        点击获取
+                    </div>
+                </div>
+            </div>
             <button type="submit" class="btn btn-primary">注册</button>
         </form>
         <div class="link">
@@ -127,12 +161,36 @@
     </div>
 
     <script>
+        // 页面加载时获取验证码
+        window.onload = function() {
+            refreshCaptcha();
+        };
+
+        function refreshCaptcha() {
+            const captchaImg = document.getElementById('captchaImg');
+            captchaImg.innerHTML = '加载中...';
+            
+            fetch('/api/captcha')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        captchaImg.innerHTML = `<img src="${data.image}" alt="验证码" onclick="event.stopPropagation(); refreshCaptcha()">`;
+                    } else {
+                        captchaImg.innerHTML = '获取失败';
+                    }
+                })
+                .catch(() => {
+                    captchaImg.innerHTML = '获取失败';
+                });
+        }
+
         document.getElementById('registerForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const nickname = document.getElementById('nickname').value;
             const email = document.getElementById('email').value;
             const password = document.getElementById('password').value;
             const confirmPassword = document.getElementById('confirmPassword').value;
+            const captcha = document.getElementById('captcha').value;
 
             if (password !== confirmPassword) {
                 const errorDiv = document.getElementById('error');
@@ -145,7 +203,7 @@
                 const response = await fetch('/api/register', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ nickname, email, password })
+                    body: JSON.stringify({ nickname, email, password, captcha })
                 });
 
                 const result = await response.json();
@@ -156,6 +214,7 @@
                     const errorDiv = document.getElementById('error');
                     errorDiv.textContent = result.message || '注册失败';
                     errorDiv.style.display = 'block';
+                    refreshCaptcha();
                 }
             } catch (error) {
                 const errorDiv = document.getElementById('error');
