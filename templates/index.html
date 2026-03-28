@@ -840,9 +840,9 @@
         
         // 创建房间
         function createRoom() {
-            alert('自定义房间功能开发中，请使用人机局进行游戏');
+            window.location.href = '/room/create';
         }
-        
+
         // 通过房间码加入房间
         function joinRoomByCode() {
             const code = document.getElementById('roomCodeInput').value.trim();
@@ -850,7 +850,7 @@
                 alert('请输入房间码');
                 return;
             }
-            alert('自定义房间功能开发中，请使用人机局进行游戏');
+            window.location.href = '/room/join?code=' + code;
         }
         
         function startGame() {

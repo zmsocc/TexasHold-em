@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>加入房间 - 德州扑克</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            background: linear-gradient(135deg, #1e3a5f, #0f1f33);
+            min-height: 100vh;
+            color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .container {
+            width: 100%;
+            max-width: 500px;
+            padding: 20px;
+        }
+        .card {
+            background: rgba(0, 0, 0, 0.7);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(255, 215, 0, 0.3);
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #ffd700;
+            font-size: 28px;
+            text-shadow: 0 0 20px rgba(255, 215, 0, 0.5);
+        }
+        .tab-container {
+            display: flex;
+            margin-bottom: 30px;
+            border-radius: 10px;
+            overflow: hidden;
+            background: rgba(255, 255, 255, 0.1);
+        }
+        .tab {
+            flex: 1;
+            padding: 15px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            border: none;
+            background: transparent;
+            color: #888;
+            font-size: 16px;
+        }
+        .tab.active {
+            background: rgba(255, 215, 0, 0.2);
+            color: #ffd700;
+        }
+        .tab:hover:not(.active) {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .form-group {
+            margin-bottom: 25px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #ccc;
+            font-size: 14px;
+        }
+        input[type="text"],
+        input[type="password"] {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid rgba(255, 215, 0, 0.3);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            font-size: 18px;
+            text-align: center;
+            letter-spacing: 5px;
+            transition: all 0.3s;
+            text-transform: uppercase;
+        }
+        input[type="text"]:focus,
+        input[type="password"]:focus {
+            outline: none;
+            border-color: #ffd700;
+            box-shadow: 0 0 15px rgba(255, 215, 0, 0.3);
+        }
+        input::placeholder {
+            color: #666;
+            text-transform: none;
+            letter-spacing: normal;
+        }
+        .btn {
+            width: 100%;
+            padding: 15px;
+            border: none;
+            border-radius: 10px;
+            font-size: 18px;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 15px;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #ffd700, #ffaa00);
+            color: #1a1a2e;
+            font-weight: bold;
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(255, 215, 0, 0.4);
+        }
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        .back-link {
+            text-align: center;
+            margin-top: 20px;
+        }
+        .back-link a {
+            color: #888;
+            text-decoration: none;
+            font-size: 14px;
+        }
+        .back-link a:hover {
+            color: #ffd700;
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+        .spinner {
+            border: 3px solid rgba(255, 215, 0, 0.3);
+            border-top: 3px solid #ffd700;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .error-message {
+            color: #ff6b6b;
+            font-size: 14px;
+            margin-top: 10px;
+            text-align: center;
+            display: none;
+        }
+        .room-info {
+            display: none;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .room-info h3 {
+            color: #ffd700;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .info-row:last-child {
+            border-bottom: none;
+        }
+        .info-label {
+            color: #888;
+        }
+        .info-value {
+            color: #fff;
+        }
+        .password-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .password-modal-content {
+            background: #1e3a5f;
+            padding: 30px;
+            border-radius: 15px;
+            width: 90%;
+            max-width: 400px;
+            border: 2px solid #ffd700;
+        }
+        .password-modal h3 {
+            color: #ffd700;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .or-divider {
+            text-align: center;
+            margin: 20px 0;
+            color: #888;
+            position: relative;
+        }
+        .or-divider::before,
+        .or-divider::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            width: 40%;
+            height: 1px;
+            background: rgba(255, 255, 255, 0.2);
+        }
+        .or-divider::before {
+            left: 0;
+        }
+        .or-divider::after {
+            right: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h1>🚪 加入房间</h1>
+            
+            <!-- 标签切换 -->
+            <div class="tab-container">
+                <button class="tab active" onclick="switchTab('code')">邀请码</button>
+                <button class="tab" onclick="switchTab('id')">房间号</button>
+            </div>
+
+            <!-- 邀请码方式 -->
+            <div id="codeTab" class="tab-content active">
+                <div class="form-group">
+                    <label for="roomCode">请输入6位邀请码</label>
+                    <input type="text" id="roomCode" placeholder="如：ABC123" maxlength="6" autocomplete="off">
+                </div>
+                <button class="btn btn-primary" onclick="searchRoomByCode()">查找房间</button>
+            </div>
+
+            <!-- 房间号方式 -->
+            <div id="idTab" class="tab-content">
+                <div class="form-group">
+                    <label for="roomId">请输入5位房间号</label>
+                    <input type="text" id="roomId" placeholder="如：10086" maxlength="5" autocomplete="off">
+                </div>
+                <button class="btn btn-primary" onclick="searchRoomById()">查找房间</button>
+            </div>
+
+            <!-- 房间信息 -->
+            <div class="room-info" id="roomInfo">
+                <h3>🏠 <span id="infoRoomName"></span></h3>
+                <div class="info-row">
+                    <span class="info-label">房间号</span>
+                    <span class="info-value" id="infoRoomId"></span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">邀请码</span>
+                    <span class="info-value" id="infoRoomCode"></span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">人数</span>
+                    <span class="info-value" id="infoPlayerCount"></span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">状态</span>
+                    <span class="info-value" id="infoStatus"></span>
+                </div>
+                <div class="info-row" id="passwordRow" style="display: none;">
+                    <span class="info-label">需要密码</span>
+                    <span class="info-value">🔒 是</span>
+                </div>
+                <button class="btn btn-primary" onclick="joinRoom()" style="margin-top: 15px;">加入房间</button>
+            </div>
+
+            <!-- 加载中 -->
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>正在处理...</p>
+            </div>
+
+            <div class="error-message" id="errorMessage"></div>
+
+            <div class="back-link">
+                <a href="/">← 返回首页</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- 密码输入弹窗 -->
+    <div class="password-modal" id="passwordModal">
+        <div class="password-modal-content">
+            <h3>🔒 请输入房间密码</h3>
+            <div class="form-group">
+                <input type="password" id="roomPassword" placeholder="房间密码" maxlength="20">
+            </div>
+            <button class="btn btn-primary" onclick="joinRoomWithPassword()">确认加入</button>
+            <button class="btn btn-secondary" onclick="closePasswordModal()">取消</button>
+        </div>
+    </div>
+
+    <script>
+        let currentRoom = null;
+        let joinMethod = '';
+        let joinValue = '';
+
+        // 切换标签
+        function switchTab(tab) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            
+            if (tab === 'code') {
+                document.querySelectorAll('.tab')[0].classList.add('active');
+                document.getElementById('codeTab').classList.add('active');
+            } else {
+                document.querySelectorAll('.tab')[1].classList.add('active');
+                document.getElementById('idTab').classList.add('active');
+            }
+            
+            // 隐藏房间信息和错误
+            document.getElementById('roomInfo').style.display = 'none';
+            document.getElementById('errorMessage').style.display = 'none';
+            currentRoom = null;
+        }
+
+        // 通过邀请码查找房间
+        async function searchRoomByCode() {
+            const code = document.getElementById('roomCode').value.trim().toUpperCase();
+            if (!code) {
+                showError('请输入邀请码');
+                return;
+            }
+            await searchRoom('room_code', code);
+        }
+
+        // 通过房间号查找房间
+        async function searchRoomById() {
+            const id = document.getElementById('roomId').value.trim();
+            if (!id) {
+                showError('请输入房间号');
+                return;
+            }
+            await searchRoom('room_id', id);
+        }
+
+        // 查找房间
+        async function searchRoom(type, value) {
+            showLoading();
+            hideError();
+
+            try {
+                const response = await fetch(`/api/room/get?${type}=${value}`);
+                const result = await response.json();
+
+                hideLoading();
+
+                if (result.success) {
+                    currentRoom = result.data;
+                    displayRoomInfo(result.data);
+                } else {
+                    showError(result.message || '房间不存在');
+                }
+            } catch (error) {
+                hideLoading();
+                showError('网络错误，请重试');
+            }
+        }
+
+        // 显示房间信息
+        function displayRoomInfo(room) {
+            document.getElementById('infoRoomName').textContent = room.room_name;
+            document.getElementById('infoRoomId').textContent = room.room_id;
+            document.getElementById('infoRoomCode').textContent = room.room_code;
+            document.getElementById('infoPlayerCount').textContent = `${room.current_players}/${room.max_players}`;
+            
+            const statusText = {
+                'waiting': '等待中',
+                'gaming': '游戏中',
+                'closed': '已关闭'
+            };
+            document.getElementById('infoStatus').textContent = statusText[room.status] || room.status;
+            
+            document.getElementById('passwordRow').style.display = room.has_password ? 'flex' : 'none';
+            document.getElementById('roomInfo').style.display = 'block';
+        }
+
+        // 加入房间
+        function joinRoom() {
+            if (!currentRoom) return;
+
+            if (currentRoom.has_password) {
+                document.getElementById('passwordModal').style.display = 'flex';
+            } else {
+                doJoinRoom('');
+            }
+        }
+
+        // 带密码加入房间
+        function joinRoomWithPassword() {
+            const password = document.getElementById('roomPassword').value;
+            doJoinRoom(password);
+        }
+
+        // 关闭密码弹窗
+        function closePasswordModal() {
+            document.getElementById('passwordModal').style.display = 'none';
+            document.getElementById('roomPassword').value = '';
+        }
+
+        // 执行加入房间
+        async function doJoinRoom(password) {
+            showLoading();
+            closePasswordModal();
+
+            try {
+                const response = await fetch('/api/room/join', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        room_id: currentRoom.room_id,
+                        password: password
+                    })
+                });
+
+                const result = await response.json();
+                hideLoading();
+
+                if (result.success) {
+                    // 加入成功，跳转到等待页面
+                    window.location.href = '/room/waiting?room_id=' + currentRoom.room_id;
+                } else {
+                    showError(result.message || '加入房间失败');
+                }
+            } catch (error) {
+                hideLoading();
+                showError('网络错误，请重试');
+            }
+        }
+
+        // 显示/隐藏加载
+        function showLoading() {
+            document.getElementById('loading').style.display = 'block';
+        }
+
+        function hideLoading() {
+            document.getElementById('loading').style.display = 'none';
+        }
+
+        // 显示/隐藏错误
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+
+        function hideError() {
+            document.getElementById('errorMessage').style.display = 'none';
+        }
+
+        // 检查URL参数（从邀请链接进入）
+        function checkUrlParams() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const code = urlParams.get('code');
+            
+            if (code) {
+                document.getElementById('roomCode').value = code;
+                searchRoomByCode();
+            }
+        }
+
+        // 检查是否已在房间中
+        async function checkExistingRoom() {
+            try {
+                const response = await fetch('/api/room/my');
+                const result = await response.json();
+                
+                if (result.success && result.data) {
+                    if (confirm('您已在房间 ' + result.data.room_name + ' 中，是否进入？')) {
+                        window.location.href = '/room/waiting?room_id=' + result.data.room_id;
+                    }
+                }
+            } catch (error) {
+                console.error('检查房间状态失败:', error);
+            }
+        }
+
+        // 页面加载时检查
+        checkExistingRoom();
+        checkUrlParams();
+    </script>
+</body>
+</html>

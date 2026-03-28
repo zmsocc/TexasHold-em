@@ -6,93 +6,103 @@ import (
 	"html/template"
 	"math/rand"
 	"net/http"
+	"sync"
 	"time"
 )
 
-// type WebGUIGame struct {
-// 	game              *Game
-// 	mu                sync.Mutex
-// 	actionChan        chan ActionData
-// 	firstGame         bool
-// 	currentPhase      string
-// 	currentPlayerName string
-// 	waitingForInput   bool
-// 	canCheck          bool
-// 	canCall           bool
-// 	canRaise          bool
-// 	minRaise          int
-// 	maxRaise          int
-// 	callAmount        int
-// 	message           string
-// 	gameOver          bool
-// 	winnerText        string
-// 	askContinue       bool
-// 	askShuffle        bool
-// 	showdownCards     []string
-// 	winnerHandRank    string
-// 	winnerName        string
-// 	currentUser       *User
-// 	noChips           bool
-// 	roomManager       *RoomManager
-// 	gameMode          string
-// 	aiPlayerCount     int
-// }
+type WebGUIGame struct {
+	game              *Game
+	mu                sync.Mutex
+	actionChan        chan ActionData
+	firstGame         bool
+	currentPhase      string
+	currentPlayerName string
+	waitingForInput   bool
+	canCheck          bool
+	canCall           bool
+	canRaise          bool
+	minRaise          int
+	maxRaise          int
+	callAmount        int
+	message           string
+	gameOver          bool
+	winnerText        string
+	askContinue       bool
+	askShuffle        bool
+	showdownCards     []string
+	winnerHandRank    string
+	winnerName        string
+	currentUser       *User
+	noChips           bool
+	gameMode          string
+	aiPlayerCount     int
+}
 
-// type GameState struct {
-// 	Players         []PlayerState `json:"players"`
-// 	CommunityCards  []string      `json:"communityCards"`
-// 	Pot             int           `json:"pot"`
-// 	Phase           string        `json:"phase"`
-// 	CurrentPlayer   string        `json:"currentPlayer"`
-// 	Message         string        `json:"message"`
-// 	GameOver        bool          `json:"gameOver"`
-// 	WinnerText      string        `json:"winnerText"`
-// 	CanCheck        bool          `json:"canCheck"`
-// 	CanCall         bool          `json:"canCall"`
-// 	CanRaise        bool          `json:"canRaise"`
-// 	MinRaise        int           `json:"minRaise"`
-// 	MaxRaise        int           `json:"maxRaise"`
-// 	CallAmount      int           `json:"callAmount"`
-// 	WaitingForInput bool          `json:"waitingForInput"`
-// 	AskContinue     bool          `json:"askContinue"`
-// 	AskShuffle      bool          `json:"askShuffle"`
-// 	ShowdownCards   []string      `json:"showdownCards"`
-// 	WinnerHandRank  string        `json:"winnerHandRank"`
-// 	WinnerName      string        `json:"winnerName"`
-// 	NoChips         bool          `json:"noChips"`
-// }
+type GameState struct {
+	Players         []PlayerState `json:"players"`
+	CommunityCards  []string      `json:"communityCards"`
+	Pot             int           `json:"pot"`
+	Phase           string        `json:"phase"`
+	CurrentPlayer   string        `json:"currentPlayer"`
+	Message         string        `json:"message"`
+	GameOver        bool          `json:"gameOver"`
+	WinnerText      string        `json:"winnerText"`
+	CanCheck        bool          `json:"canCheck"`
+	CanCall         bool          `json:"canCall"`
+	CanRaise        bool          `json:"canRaise"`
+	MinRaise        int           `json:"minRaise"`
+	MaxRaise        int           `json:"maxRaise"`
+	CallAmount      int           `json:"callAmount"`
+	WaitingForInput bool          `json:"waitingForInput"`
+	AskContinue     bool          `json:"askContinue"`
+	AskShuffle      bool          `json:"askShuffle"`
+	ShowdownCards   []string      `json:"showdownCards"`
+	WinnerHandRank  string        `json:"winnerHandRank"`
+	WinnerName      string        `json:"winnerName"`
+	NoChips         bool          `json:"noChips"`
+}
 
-// type ActionData struct {
-// 	Action Action
-// 	Amount int
-// }
+type ActionData struct {
+	Action Action
+	Amount int
+}
 
-// type PlayerState struct {
-// 	ID           int      `json:"id"`
-// 	Name         string   `json:"name"`
-// 	Chips        int      `json:"chips"`
-// 	Cards        []string `json:"cards"`
-// 	Bet          int      `json:"bet"`
-// 	Folded       bool     `json:"folded"`
-// 	AllIn        bool     `json:"allIn"`
-// 	IsHuman      bool     `json:"isHuman"`
-// 	IsCurrent    bool     `json:"isCurrent"`
-// 	IsDealer     bool     `json:"isDealer"`
-// 	IsSmallBlind bool     `json:"isSmallBlind"`
-// 	IsBigBlind   bool     `json:"isBigBlind"`
-// }
+type PlayerState struct {
+	ID           int      `json:"id"`
+	Name         string   `json:"name"`
+	Chips        int      `json:"chips"`
+	Cards        []string `json:"cards"`
+	Bet          int      `json:"bet"`
+	Folded       bool     `json:"folded"`
+	AllIn        bool     `json:"allIn"`
+	IsHuman      bool     `json:"isHuman"`
+	IsCurrent    bool     `json:"isCurrent"`
+	IsDealer     bool     `json:"isDealer"`
+	IsSmallBlind bool     `json:"isSmallBlind"`
+	IsBigBlind   bool     `json:"isBigBlind"`
+}
 
-// func NewWebGUIGame() *WebGUIGame {
-// 	return &WebGUIGame{
-// 		actionChan:    make(chan ActionData, 1),
-// 		firstGame:     true,
-// 		roomManager:   NewRoomManager(),
-// 		gameMode:      "ai",
-// 		aiPlayerCount: 6,
-// 	}
-// }
+func NewWebGUIGame() *WebGUIGame {
+	return &WebGUIGame{
+		actionChan:    make(chan ActionData, 1),
+		firstGame:     true,
+		gameMode:      "ai",
+		aiPlayerCount: 6,
+	}
+}
+
+// 内存用户存储（当数据库不可用时使用）
+var (
+	users      = make(map[string]*User)
+	usersByID  = make(map[int]*User)
+	nextUserID = 1
+	usersMu    sync.Mutex
+)
 
 func (g *WebGUIGame) Run() {
+	// 初始化WebSocket
+	InitWebSocket()
+
 	// 主页 - 需要JWT认证
 	http.HandleFunc("/", g.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -106,12 +116,30 @@ func (g *WebGUIGame) Run() {
 	http.HandleFunc("/login", g.handleLoginPage)
 	http.HandleFunc("/register", g.handleRegisterPage)
 
+	// 房间相关页面
+	http.HandleFunc("/room/create", g.authMiddleware(g.handleCreateRoomPage))
+	http.HandleFunc("/room/join", g.authMiddleware(g.handleJoinRoomPage))
+	http.HandleFunc("/room/waiting", g.authMiddleware(g.handleWaitingRoomPage))
+
 	// API接口
 	http.HandleFunc("/api/captcha", HandleCaptcha)
 	http.HandleFunc("/api/login", g.handleLoginAPI)
 	http.HandleFunc("/api/register", g.handleRegisterAPI)
 	http.HandleFunc("/api/logout", g.authMiddleware(g.handleLogoutAPI))
 	http.HandleFunc("/api/refresh", g.handleRefreshToken)
+
+	// 房间相关API
+	http.HandleFunc("/api/room/create", g.authMiddleware(HandleCreateRoom))
+	http.HandleFunc("/api/room/join", g.authMiddleware(HandleJoinRoom))
+	http.HandleFunc("/api/room/leave", g.authMiddleware(HandleLeaveRoom))
+	http.HandleFunc("/api/room/get", g.authMiddleware(HandleGetRoom))
+	http.HandleFunc("/api/room/my", g.authMiddleware(HandleGetMyRoom))
+	http.HandleFunc("/api/room/ready", g.authMiddleware(HandleSetReady))
+	http.HandleFunc("/api/room/start", g.authMiddleware(HandleStartGame))
+	http.HandleFunc("/api/room/kick", g.authMiddleware(HandleKickPlayer))
+
+	// WebSocket端点
+	http.HandleFunc("/ws", g.authMiddleware(HandleWebSocket))
 
 	// 游戏相关API - 需要认证
 	http.HandleFunc("/state", g.authMiddleware(g.handleState))
@@ -156,7 +184,7 @@ func (g *WebGUIGame) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 		if tokenString == "" {
 			// 如果是API请求，返回401
-			if r.URL.Path[:4] == "/api" || r.URL.Path == "/state" || r.URL.Path == "/action" {
+			if (len(r.URL.Path) >= 4 && r.URL.Path[:4] == "/api") || r.URL.Path == "/state" || r.URL.Path == "/action" {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
 				json.NewEncoder(w).Encode(map[string]interface{}{
@@ -173,7 +201,7 @@ func (g *WebGUIGame) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		claims, err := ParseAccessToken(tokenString)
 		if err != nil {
 			// Token无效或过期
-			if r.URL.Path[:4] == "/api" || r.URL.Path == "/state" || r.URL.Path == "/action" {
+			if (len(r.URL.Path) >= 4 && r.URL.Path[:4] == "/api") || r.URL.Path == "/state" || r.URL.Path == "/action" {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
 				json.NewEncoder(w).Encode(map[string]interface{}{
@@ -264,6 +292,36 @@ func (g *WebGUIGame) handleRegisterPage(w http.ResponseWriter, r *http.Request) 
 	}
 
 	tmpl, err := template.ParseFiles("templates/register.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tmpl.Execute(w, nil)
+}
+
+// handleCreateRoomPage 创建房间页面
+func (g *WebGUIGame) handleCreateRoomPage(w http.ResponseWriter, r *http.Request) {
+	tmpl, err := template.ParseFiles("templates/create_room.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tmpl.Execute(w, nil)
+}
+
+// handleJoinRoomPage 加入房间页面
+func (g *WebGUIGame) handleJoinRoomPage(w http.ResponseWriter, r *http.Request) {
+	tmpl, err := template.ParseFiles("templates/join_room.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tmpl.Execute(w, nil)
+}
+
+// handleWaitingRoomPage 房间等待页面
+func (g *WebGUIGame) handleWaitingRoomPage(w http.ResponseWriter, r *http.Request) {
+	tmpl, err := template.ParseFiles("templates/waiting_room.html")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1297,78 +1355,3 @@ func (g *WebGUIGame) getGameState() *GameState {
 
 	return state
 }
-
-// 全局变量
-// var (
-// 	users      = make(map[string]*User)
-// 	usersByID  = make(map[int]*User)
-// 	nextUserID = 1
-// 	usersMu    sync.Mutex
-// )
-
-// type User struct {
-// 	ID       int
-// 	Nickname string
-// 	Email    string
-// 	Password string
-// }
-
-// func getRankOrder(rank Rank) int {
-// 	switch rank {
-// 	case Ace:
-// 		return 14
-// 	case King:
-// 		return 13
-// 	case Queen:
-// 		return 12
-// 	case Jack:
-// 		return 11
-// 	case Ten:
-// 		return 10
-// 	case Nine:
-// 		return 9
-// 	case Eight:
-// 		return 8
-// 	case Seven:
-// 		return 7
-// 	case Six:
-// 		return 6
-// 	case Five:
-// 		return 5
-// 	case Four:
-// 		return 4
-// 	case Three:
-// 		return 3
-// 	case Two:
-// 		return 2
-// 	default:
-// 		return 0
-// 	}
-// }
-
-// func getHandRankName(rank HandRank) string {
-// 	switch rank {
-// 	case RoyalFlush:
-// 		return "皇家同花顺"
-// 	case StraightFlush:
-// 		return "同花顺"
-// 	case FourOfKind:
-// 		return "四条"
-// 	case FullHouse:
-// 		return "满堂红"
-// 	case Flush:
-// 		return "同花"
-// 	case Straight:
-// 		return "顺子"
-// 	case ThreeOfKind:
-// 		return "三条"
-// 	case TwoPair:
-// 		return "两对"
-// 	case OnePair:
-// 		return "一对"
-// 	case HighCard:
-// 		return "高牌"
-// 	default:
-// 		return ""
-// 	}
-// }

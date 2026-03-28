@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>创建房间 - 德州扑克</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            background: linear-gradient(135deg, #1e3a5f, #0f1f33);
+            min-height: 100vh;
+            color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .container {
+            width: 100%;
+            max-width: 500px;
+            padding: 20px;
+        }
+        .card {
+            background: rgba(0, 0, 0, 0.7);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(255, 215, 0, 0.3);
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #ffd700;
+            font-size: 28px;
+            text-shadow: 0 0 20px rgba(255, 215, 0, 0.5);
+        }
+        .form-group {
+            margin-bottom: 25px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #ccc;
+            font-size: 14px;
+        }
+        input[type="text"],
+        input[type="password"],
+        input[type="number"],
+        select {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid rgba(255, 215, 0, 0.3);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            font-size: 16px;
+            transition: all 0.3s;
+        }
+        input[type="text"]:focus,
+        input[type="password"]:focus,
+        input[type="number"]:focus,
+        select:focus {
+            outline: none;
+            border-color: #ffd700;
+            box-shadow: 0 0 10px rgba(255, 215, 0, 0.3);
+        }
+        input::placeholder {
+            color: #888;
+        }
+        /* select option 样式 */
+        select option {
+            background: #1e3a5f;
+            color: white;
+            padding: 10px;
+        }
+        /* 修复 select 在 Firefox 中的样式 */
+        select:-moz-focusring {
+            color: transparent;
+            text-shadow: 0 0 0 white;
+        }
+        /* 修复 select 在 IE/Edge 中的样式 */
+        select::-ms-expand {
+            display: none;
+        }
+        .btn {
+            width: 100%;
+            padding: 15px;
+            border: none;
+            border-radius: 10px;
+            font-size: 18px;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 15px;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #ffd700, #ffaa00);
+            color: #1a1a2e;
+            font-weight: bold;
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(255, 215, 0, 0.4);
+        }
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        .back-link {
+            text-align: center;
+            margin-top: 20px;
+        }
+        .back-link a {
+            color: #888;
+            text-decoration: none;
+            font-size: 14px;
+        }
+        .back-link a:hover {
+            color: #ffd700;
+        }
+        .result-card {
+            display: none;
+            text-align: center;
+        }
+        .room-code {
+            font-size: 48px;
+            font-weight: bold;
+            color: #ffd700;
+            letter-spacing: 10px;
+            margin: 20px 0;
+            text-shadow: 0 0 20px rgba(255, 215, 0, 0.5);
+        }
+        .invite-link {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            word-break: break-all;
+            font-size: 14px;
+            color: #ccc;
+        }
+        .copy-btn {
+            background: #28a745;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+        .copy-btn:hover {
+            background: #218838;
+        }
+        .info-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .info-item:last-child {
+            border-bottom: none;
+        }
+        .info-label {
+            color: #888;
+        }
+        .info-value {
+            color: #ffd700;
+            font-weight: bold;
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+        .spinner {
+            border: 3px solid rgba(255, 215, 0, 0.3);
+            border-top: 3px solid #ffd700;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .error-message {
+            color: #ff6b6b;
+            font-size: 14px;
+            margin-top: 5px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <!-- 创建表单 -->
+            <div id="createForm">
+                <h1>🏠 创建房间</h1>
+                <form id="roomForm">
+                    <div class="form-group">
+                        <label for="roomName">房间名称</label>
+                        <input type="text" id="roomName" placeholder="请输入房间名称" maxlength="50">
+                    </div>
+                    <div class="form-group">
+                        <label for="password">房间密码（可选）</label>
+                        <input type="password" id="password" placeholder="不设置则任何人可加入" maxlength="20">
+                    </div>
+                    <div class="form-group">
+                        <label for="maxPlayers">最大人数</label>
+                        <select id="maxPlayers">
+                            <option value="2">2人</option>
+                            <option value="3">3人</option>
+                            <option value="4">4人</option>
+                            <option value="5">5人</option>
+                            <option value="6" selected>6人</option>
+                            <option value="7">7人</option>
+                            <option value="8">8人</option>
+                            <option value="9">9人</option>
+                            <option value="10">10人</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="gameConfig">游戏配置（可选）</label>
+                        <input type="text" id="gameConfig" placeholder="如：盲注大小等配置">
+                    </div>
+                    <button type="submit" class="btn btn-primary">创建房间</button>
+                    <div class="error-message" id="errorMessage"></div>
+                </form>
+                <div class="back-link">
+                    <a href="/">← 返回首页</a>
+                </div>
+            </div>
+
+            <!-- 加载中 -->
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>正在创建房间...</p>
+            </div>
+
+            <!-- 创建结果 -->
+            <div class="result-card" id="resultCard">
+                <h1>✅ 房间创建成功</h1>
+                <div class="room-code" id="roomCode"></div>
+                <div class="info-item">
+                    <span class="info-label">房间号</span>
+                    <span class="info-value" id="roomId"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">房间名称</span>
+                    <span class="info-value" id="resultRoomName"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">最大人数</span>
+                    <span class="info-value" id="resultMaxPlayers"></span>
+                </div>
+                <div class="invite-link" id="inviteLink"></div>
+                <button class="copy-btn" onclick="copyInviteLink()">📋 复制邀请链接</button>
+                <button class="btn btn-primary" onclick="goToRoom()" style="margin-top: 20px;">进入房间</button>
+                <button class="btn btn-secondary" onclick="location.reload()">创建新房间</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let createdRoomId = '';
+        let inviteUrl = '';
+
+        document.getElementById('roomForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const roomName = document.getElementById('roomName').value.trim();
+            const password = document.getElementById('password').value;
+            const maxPlayers = parseInt(document.getElementById('maxPlayers').value);
+            const gameConfig = document.getElementById('gameConfig').value;
+
+            // 显示加载中
+            document.getElementById('createForm').style.display = 'none';
+            document.getElementById('loading').style.display = 'block';
+
+            try {
+                const response = await fetch('/api/room/create', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        room_name: roomName,
+                        password: password,
+                        max_players: maxPlayers,
+                        game_config: gameConfig
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    createdRoomId = result.data.room_id;
+                    inviteUrl = result.data.invite_url;
+
+                    // 显示结果
+                    document.getElementById('loading').style.display = 'none';
+                    document.getElementById('resultCard').style.display = 'block';
+                    document.getElementById('roomCode').textContent = result.data.room_code;
+                    document.getElementById('roomId').textContent = result.data.room_id;
+                    document.getElementById('resultRoomName').textContent = result.data.room_name;
+                    document.getElementById('resultMaxPlayers').textContent = result.data.max_players + '人';
+                    document.getElementById('inviteLink').textContent = inviteUrl;
+                } else {
+                    showError(result.message || '创建房间失败');
+                }
+            } catch (error) {
+                showError('网络错误，请重试');
+            }
+        });
+
+        function showError(message) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('createForm').style.display = 'block';
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+
+        function copyInviteLink() {
+            navigator.clipboard.writeText(inviteUrl).then(() => {
+                alert('邀请链接已复制到剪贴板！');
+            }).catch(() => {
+                // 降级方案
+                const input = document.createElement('input');
+                input.value = inviteUrl;
+                document.body.appendChild(input);
+                input.select();
+                document.execCommand('copy');
+                document.body.removeChild(input);
+                alert('邀请链接已复制到剪贴板！');
+            });
+        }
+
+        function goToRoom() {
+            window.location.href = '/room/waiting?room_id=' + createdRoomId;
+        }
+
+        // 检查是否已在房间中
+        async function checkExistingRoom() {
+            try {
+                const response = await fetch('/api/room/my');
+                const result = await response.json();
+                
+                if (result.success && result.data) {
+                    if (confirm('您已在房间 ' + result.data.room_name + ' 中，是否进入？')) {
+                        window.location.href = '/room/waiting?room_id=' + result.data.room_id;
+                    }
+                }
+            } catch (error) {
+                console.error('检查房间状态失败:', error);
+            }
+        }
+
+        // 页面加载时检查
+        checkExistingRoom();
+    </script>
+</body>
+</html>

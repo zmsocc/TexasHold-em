@@ -185,3 +185,65 @@ func CompareHands(h1, h2 Hand) int {
 	}
 	return compareKickers(h1.Kickers, h2.Kickers)
 }
+
+// getRankOrder 获取牌面大小顺序
+func getRankOrder(rank Rank) int {
+	switch rank {
+	case Ace:
+		return 14
+	case King:
+		return 13
+	case Queen:
+		return 12
+	case Jack:
+		return 11
+	case Ten:
+		return 10
+	case Nine:
+		return 9
+	case Eight:
+		return 8
+	case Seven:
+		return 7
+	case Six:
+		return 6
+	case Five:
+		return 5
+	case Four:
+		return 4
+	case Three:
+		return 3
+	case Two:
+		return 2
+	default:
+		return 0
+	}
+}
+
+// getHandRankName 获取牌型名称
+func getHandRankName(rank HandRank) string {
+	switch rank {
+	case RoyalFlush:
+		return "皇家同花顺"
+	case StraightFlush:
+		return "同花顺"
+	case FourOfKind:
+		return "四条"
+	case FullHouse:
+		return "满堂红"
+	case Flush:
+		return "同花"
+	case Straight:
+		return "顺子"
+	case ThreeOfKind:
+		return "三条"
+	case TwoPair:
+		return "两对"
+	case OnePair:
+		return "一对"
+	case HighCard:
+		return "高牌"
+	default:
+		return ""
+	}
+}
