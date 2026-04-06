@@ -566,11 +566,17 @@
 
             // 房主开始游戏按钮
             if (isHost) {
-                const canStart = roomData.current_players >= 2 && roomData.players.every(p => 
+                const hasEnoughPlayers = roomData.current_players >= 2;
+                const allReady = roomData.players.every(p => 
                     p.is_ready || p.user_id === roomData.creator_id
                 );
+                const canStart = hasEnoughPlayers && allReady;
+                
                 html += `<button class="btn btn-start" onclick="startGame()" ${!canStart ? 'disabled' : ''}>🎮 开始游戏</button>`;
-                if (!canStart) {
+                
+                if (!hasEnoughPlayers) {
+                    html += '<div style="color: #ff6b6b; font-size: 12px; text-align: center; margin-top: 5px;">至少需要2人才能开始游戏</div>';
+                } else if (!allReady) {
                     html += '<div style="color: #888; font-size: 12px; text-align: center; margin-top: 5px;">所有玩家准备后才能开始</div>';
                 }
             }
@@ -640,7 +646,7 @@
                     // 游戏开始
                     showNotification('游戏开始！');
                     setTimeout(() => {
-                        window.location.href = '/?room_id=' + roomId;
+                        window.location.href = '/room/game?room_id=' + roomId;
                     }, 1000);
                     break;
                 

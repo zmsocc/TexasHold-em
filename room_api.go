@@ -474,6 +474,22 @@ func HandleGetRoom(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// 构造玩家列表，添加is_me字段
+	var playerList []map[string]interface{}
+	for _, p := range players {
+		playerData := map[string]interface{}{
+			"id":         p.ID,
+			"room_id":    p.RoomID,
+			"user_id":    p.UserID,
+			"nickname":   p.Nickname,
+			"seat_index": p.SeatIndex,
+			"is_ready":   p.IsReady,
+			"joined_at":  p.JoinedAt,
+			"is_me":      user != nil && p.UserID == user.ID,
+		}
+		playerList = append(playerList, playerData)
+	}
+
 	// 构造响应（隐藏密码）
 	roomData := map[string]interface{}{
 		"room_id":         room.RoomID,
@@ -485,7 +501,7 @@ func HandleGetRoom(w http.ResponseWriter, r *http.Request) {
 		"status":          room.Status,
 		"has_password":    room.Password != "",
 		"created_at":      room.CreatedAt,
-		"players":         players,
+		"players":         playerList,
 		"is_in_room":      isInRoom,
 	}
 
@@ -747,6 +763,16 @@ func HandleStartGame(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+	}
+
+	// 创建多人游戏实例
+	_, err = multiplayerManager.CreateGame(req.RoomID, players)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "创建游戏失败: " + err.Error(),
+		})
+		return
 	}
 
 	// 更新房间状态

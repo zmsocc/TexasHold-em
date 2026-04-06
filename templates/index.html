@@ -658,7 +658,49 @@
         let currentTimerStart = null;
         let panelCollapsed = false;
         let isPaused = false;
-        
+        let roomIdFromUrl = null;
+
+        // 页面加载时检查是否有room_id参数
+        document.addEventListener('DOMContentLoaded', function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            roomIdFromUrl = urlParams.get('room_id');
+            if (roomIdFromUrl) {
+                // 从房间页面跳转过来，自动开始游戏
+                setTimeout(() => {
+                    startGameFromRoom(roomIdFromUrl);
+                }, 500);
+            }
+        });
+
+        function startGameFromRoom(roomId) {
+            // 重置前端状态
+            gameState = null;
+            lastStateHash = '';
+            if (pollInterval) clearInterval(pollInterval);
+            pollInterval = null;
+            stopTimer();
+
+            // 重置UI
+            document.getElementById('phase').textContent = '准备开始';
+            document.getElementById('pot').textContent = '底池: 0';
+            document.getElementById('message').style.display = 'none';
+            document.getElementById('community').style.display = 'none';
+            document.getElementById('community').innerHTML = '';
+            document.getElementById('playersTop').innerHTML = '';
+            document.getElementById('playersBottom').innerHTML = '';
+            document.getElementById('pauseBtn').style.display = 'block';
+            hideModal();
+
+            // 调用开始游戏接口，带上room_id
+            fetch('/action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'start', room_id: roomId })
+            }).then(() => {
+                startPolling();
+            });
+        }
+
         function togglePause() {
             isPaused = !isPaused;
             const pauseModal = document.getElementById('pauseModal');
@@ -909,7 +951,21 @@
                     updateTimerDisplay();
                 });
         }
-        
+
+        function goHome() {
+            window.location.href = '/';
+        }
+
+        function goBackToRoom() {
+            // 返回房间页面，需要带上room_id
+            if (roomIdFromUrl) {
+                window.location.href = '/room/waiting?room_id=' + roomIdFromUrl;
+            } else {
+                // 如果没有room_id，返回首页
+                window.location.href = '/';
+            }
+        }
+
         function startTimer() {
             if (timerInterval) clearInterval(timerInterval);
             currentTimerStart = Date.now();
@@ -1060,12 +1116,23 @@
         
         function renderControls(state) {
             const controls = document.getElementById('controls');
-            
+
+            // 游戏结束且不再继续，显示重新开始按钮
+            if (state.gameOver && !state.askContinue && !state.askShuffle) {
+                // 房间模式显示返回首页和返回房间按钮
+                if (state.gameMode === 'room') {
+                    controls.innerHTML = '<button class="btn btn-check" onclick="goHome()">返回首页</button><button class="btn btn-start" onclick="goBackToRoom()" style="margin-left: 10px;">返回房间</button>';
+                } else {
+                    controls.innerHTML = '<button class="btn btn-start" onclick="startGame()">重新开始</button><button class="btn btn-check" onclick="goHome()" style="margin-left: 10px;">返回首页</button>';
+                }
+                return;
+            }
+
             if (!state.waitingForInput && !state.currentPlayer && state.phase && state.phase !== '准备开始' && state.phase !== '摊牌') {
                 controls.innerHTML = '<div style="font-size: 18px;">等待其他玩家...</div>';
                 return;
             }
-            
+
             if (!state.waitingForInput) {
                 controls.innerHTML = '';
                 return;
@@ -1151,7 +1218,7 @@
                 body: JSON.stringify({ action: 'noContinue' })
             });
             hideModal();
-            document.getElementById('controls').innerHTML = '<button class="btn btn-start" onclick="startGame()">重新开始</button>';
+            document.getElementById('controls').innerHTML = '<button class="btn btn-start" onclick="startGame()">重新开始</button><button class="btn btn-check" onclick="goHome()" style="margin-left: 10px;">返回首页</button>';
         }
         
         function showShuffleModal() {

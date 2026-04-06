@@ -47,6 +47,25 @@ func NewGame(numPlayers int, startingChips int, humanPlayerName string) *Game {
 	return game
 }
 
+// NewGameWithPlayers 使用指定玩家列表创建游戏
+func NewGameWithPlayers(playerNames []string, humanIndex int) *Game {
+	game := &Game{
+		Players:        make([]*Player, 0, len(playerNames)),
+		CommunityCards: make([]Card, 0, 5),
+		ButtonPos:      0,
+		SmallBlind:     1,
+		BigBlind:       2,
+		CurrentBet:     0,
+		scanner:        bufio.NewScanner(os.Stdin),
+	}
+
+	for i, name := range playerNames {
+		game.Players = append(game.Players, NewPlayer(i+1, name, 100))
+	}
+
+	return game
+}
+
 func (g *Game) NewHand() {
 	g.Deck = NewDeck()
 	g.Deck.Shuffle()

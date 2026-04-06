@@ -60,6 +60,8 @@ type GameState struct {
 	WinnerHandRank  string        `json:"winnerHandRank"`
 	WinnerName      string        `json:"winnerName"`
 	NoChips         bool          `json:"noChips"`
+	GameMode        string        `json:"gameMode"`
+	RoomID          string        `json:"roomId"`
 }
 
 type ActionData struct {
@@ -120,6 +122,7 @@ func (g *WebGUIGame) Run() {
 	http.HandleFunc("/room/create", g.authMiddleware(g.handleCreateRoomPage))
 	http.HandleFunc("/room/join", g.authMiddleware(g.handleJoinRoomPage))
 	http.HandleFunc("/room/waiting", g.authMiddleware(g.handleWaitingRoomPage))
+	http.HandleFunc("/room/game", g.authMiddleware(g.handleRoomGamePage))
 
 	// API接口
 	http.HandleFunc("/api/captcha", HandleCaptcha)
@@ -157,10 +160,10 @@ func (g *WebGUIGame) Run() {
 	fmt.Println("=====================================")
 	fmt.Println("   德州扑克 Web GUI 已启动！")
 	fmt.Println("=====================================")
-	fmt.Println("请在浏览器中打开: http://localhost:8080")
+	fmt.Println("请在浏览器中打开: http://192.168.0.31:8080")
 	fmt.Println("=====================================")
 
-	http.ListenAndServe(":8080", nil)
+	http.ListenAndServe("192.168.0.31:8080", nil)
 }
 
 // authMiddleware JWT认证中间件
@@ -322,6 +325,16 @@ func (g *WebGUIGame) handleJoinRoomPage(w http.ResponseWriter, r *http.Request) 
 // handleWaitingRoomPage 房间等待页面
 func (g *WebGUIGame) handleWaitingRoomPage(w http.ResponseWriter, r *http.Request) {
 	tmpl, err := template.ParseFiles("templates/waiting_room.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tmpl.Execute(w, nil)
+}
+
+// handleRoomGamePage 房间游戏页面（多人对战）
+func (g *WebGUIGame) handleRoomGamePage(w http.ResponseWriter, r *http.Request) {
+	tmpl, err := template.ParseFiles("templates/room_game.html")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -709,6 +722,7 @@ func (g *WebGUIGame) handleAction(w http.ResponseWriter, r *http.Request) {
 	var actionReq struct {
 		Action string `json:"action"`
 		Amount int    `json:"amount"`
+		RoomID string `json:"room_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&actionReq); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -747,16 +761,48 @@ func (g *WebGUIGame) handleAction(w http.ResponseWriter, r *http.Request) {
 		g.mu.Lock()
 		rand.Seed(time.Now().UnixNano())
 
-		numPlayers := g.aiPlayerCount
-		if actionReq.Amount >= 2 && actionReq.Amount <= 10 {
-			numPlayers = actionReq.Amount
+		// 检查是否是房间模式
+		if actionReq.RoomID != "" {
+			// 房间模式：从数据库获取玩家列表
+			players, err := GetRoomPlayers(actionReq.RoomID)
+			if err != nil || len(players) < 2 {
+				g.mu.Unlock()
+				http.Error(w, "房间玩家不足", http.StatusBadRequest)
+				return
+			}
+
+			// 创建游戏，使用房间中的玩家
+			playerNames := make([]string, len(players))
+			for i, p := range players {
+				playerNames[i] = p.Nickname
+			}
+
+			// 找到当前用户在玩家列表中的位置
+			humanIndex := -1
+			for i, p := range players {
+				if g.currentUser != nil && p.UserID == g.currentUser.ID {
+					humanIndex = i
+					break
+				}
+			}
+
+			g.game = NewGameWithPlayers(playerNames, humanIndex)
+			g.gameMode = "room"
+		} else {
+			// AI模式
+			numPlayers := g.aiPlayerCount
+			if actionReq.Amount >= 2 && actionReq.Amount <= 10 {
+				numPlayers = actionReq.Amount
+			}
+
+			humanName := ""
+			if g.currentUser != nil {
+				humanName = g.currentUser.Nickname
+			}
+			g.game = NewGame(numPlayers, 100, humanName)
+			g.gameMode = "ai"
 		}
 
-		humanName := ""
-		if g.currentUser != nil {
-			humanName = g.currentUser.Nickname
-		}
-		g.game = NewGame(numPlayers, 100, humanName)
 		g.firstGame = true
 		go g.playHand()
 		g.mu.Unlock()
@@ -1010,7 +1056,11 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 			humanPlayerName = g.currentUser.Nickname
 		}
 
-		if player.Name == humanPlayerName {
+		// 判断是否是当前用户操作
+		isCurrentUser := player.Name == humanPlayerName
+
+		if isCurrentUser {
+			// 当前用户操作
 			g.message = "轮到你了！"
 			g.waitingForInput = true
 
@@ -1046,9 +1096,25 @@ func (g *WebGUIGame) runBettingRound(phase string) {
 				raiseAmount = actionData.Amount
 			case <-timeoutChan:
 				action = Fold
+				g.message = "操作超时，自动弃牌"
 			}
 			g.mu.Lock()
+		} else if g.gameMode == "room" {
+			// 房间模式下的其他玩家 - 使用AI自动操作，但显示60秒倒计时
+			g.message = fmt.Sprintf("轮到 %s 思考中...", player.Name)
+			g.waitingForInput = false
+			// 清空操作按钮
+			g.canCheck = false
+			g.canCall = false
+			g.canRaise = false
+
+			// 等待3秒模拟思考时间（或者可以调整为更短）
+			g.mu.Unlock()
+			time.Sleep(3000 * time.Millisecond)
+			g.mu.Lock()
+			action, raiseAmount = g.game.getAIAction(player)
 		} else {
+			// AI模式下的AI玩家
 			g.message = fmt.Sprintf("轮到 %s 思考中...", player.Name)
 			g.mu.Unlock()
 			time.Sleep(3000 * time.Millisecond)
@@ -1299,6 +1365,7 @@ func (g *WebGUIGame) getGameState() *GameState {
 		WinnerHandRank:  g.winnerHandRank,
 		WinnerName:      g.winnerName,
 		NoChips:         g.noChips,
+		GameMode:        g.gameMode,
 	}
 
 	numPlayers := len(g.game.Players)
@@ -1316,6 +1383,9 @@ func (g *WebGUIGame) getGameState() *GameState {
 			continue
 		}
 
+		// 在房间模式下，通过玩家名称匹配来判断是否是当前用户
+		isHuman := p.Name == humanPlayerName
+
 		ps := PlayerState{
 			ID:           p.ID,
 			Name:         p.Name,
@@ -1323,7 +1393,7 @@ func (g *WebGUIGame) getGameState() *GameState {
 			Bet:          p.Bet,
 			Folded:       p.Folded,
 			AllIn:        p.AllIn,
-			IsHuman:      p.Name == humanPlayerName,
+			IsHuman:      isHuman,
 			IsCurrent:    p.Name == g.currentPlayerName,
 			IsDealer:     i == dealerPos,
 			IsSmallBlind: i == sbPos,
@@ -1331,15 +1401,18 @@ func (g *WebGUIGame) getGameState() *GameState {
 			Cards:        make([]string, 0, 2),
 		}
 
-		if p.Name == humanPlayerName {
+		// 只有当前玩家才能看到自己的牌
+		if isHuman {
 			for _, c := range p.HoleCards {
 				ps.Cards = append(ps.Cards, c.ImageFileName())
 			}
 		} else if !p.Folded && g.currentPhase == "摊牌" {
+			// 摊牌阶段显示所有未弃牌玩家的牌
 			for _, c := range p.HoleCards {
 				ps.Cards = append(ps.Cards, c.ImageFileName())
 			}
 		} else {
+			// 其他玩家显示背面
 			ps.Cards = append(ps.Cards, "bm.png", "bm.png")
 		}
 		state.Players = append(state.Players, ps)

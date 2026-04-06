@@ -12,7 +12,7 @@ import (
 
 // WebSocketManager WebSocket连接管理器
 type WebSocketManager struct {
-	clients    map[int]*Client     // user_id -> client
+	clients    map[int]*Client            // user_id -> client
 	rooms      map[string]map[int]*Client // room_id -> map[user_id]client
 	register   chan *Client
 	unregister chan *Client
@@ -44,7 +44,7 @@ type WebSocketMessage struct {
 
 var (
 	wsManager *WebSocketManager
-	upgrader = websocket.Upgrader{
+	upgrader  = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			return true // 允许所有来源，生产环境应该限制
 		},
@@ -271,6 +271,43 @@ func (c *Client) handleMessage(msg map[string]interface{}) {
 			Event: "pong",
 			Data:  map[string]interface{}{"time": time.Now().Unix()},
 		})
+
+	case "game_action":
+		// 游戏操作
+		if c.RoomID == "" {
+			return
+		}
+
+		game := multiplayerManager.GetGame(c.RoomID)
+		if game == nil {
+			return
+		}
+
+		action, _ := msg["action"].(string)
+		amount := 0
+		if amt, ok := msg["amount"].(float64); ok {
+			amount = int(amt)
+		}
+
+		// 提交操作
+		err := game.SubmitAction(c.UserID, action, amount)
+		if err != nil {
+			c.Send <- mustJSON(WebSocketMessage{
+				Event: "action_error",
+				Data:  map[string]string{"error": err.Error()},
+			})
+		}
+
+	case "join_game":
+		// 加入游戏（从房间等待页面进入游戏）
+		if c.RoomID == "" {
+			return
+		}
+
+		game := multiplayerManager.GetGame(c.RoomID)
+		if game != nil {
+			game.Join(c.UserID, c)
+		}
 	}
 }
 
