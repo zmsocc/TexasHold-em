@@ -33,19 +33,21 @@ type MultiplayerGame struct {
 	BroadcastChan  chan GameEvent
 	mu             sync.RWMutex
 	timer          *time.Timer
+	SmallBlind     int
+	BigBlind       int
 }
 
 // MultiplayerPlayer 多人游戏玩家
 type MultiplayerPlayer struct {
-	UserID   int
-	Nickname string
+	UserID    int
+	Nickname  string
 	SeatIndex int
-	Chips    int
-	Bet      int
-	Folded   bool
-	AllIn    bool
-	IsOnline bool
-	Conn     *Client
+	Chips     int
+	Bet       int
+	Folded    bool
+	AllIn     bool
+	IsOnline  bool
+	Conn      *Client
 }
 
 // GameAction 游戏动作记录
@@ -59,8 +61,8 @@ type GameAction struct {
 
 // GameEvent 游戏事件
 type GameEvent struct {
-	Type   string      `json:"type"`
-	Data   interface{} `json:"data"`
+	Type string      `json:"type"`
+	Data interface{} `json:"data"`
 }
 
 // MultiplayerGameManager 多人游戏管理器
@@ -78,9 +80,14 @@ func (mgm *MultiplayerGameManager) CreateGame(roomID string, roomPlayers []*Room
 	mgm.mu.Lock()
 	defer mgm.mu.Unlock()
 
+	fmt.Printf("CreateGame: 被调用，roomID=%s\n", roomID)
+
 	if _, exists := mgm.games[roomID]; exists {
+		fmt.Printf("CreateGame: 游戏已存在，roomID=%s\n", roomID)
 		return nil, fmt.Errorf("游戏已存在")
 	}
+
+	fmt.Printf("CreateGame: 创建新游戏，roomID=%s, players=%d\n", roomID, len(roomPlayers))
 
 	game := &MultiplayerGame{
 		RoomID:        roomID,
@@ -91,10 +98,13 @@ func (mgm *MultiplayerGameManager) CreateGame(roomID string, roomPlayers []*Room
 		ActionLog:     make([]GameAction, 0),
 		ActionChan:    make(chan PlayerAction, 100),
 		BroadcastChan: make(chan GameEvent, 100),
+		SmallBlind:    10,
+		BigBlind:      20,
 	}
 
 	// 按座位顺序添加玩家
 	for _, rp := range roomPlayers {
+		fmt.Printf("CreateGame: adding player user_id=%d, nickname=%s\n", rp.UserID, rp.Nickname)
 		game.Players[rp.UserID] = &MultiplayerPlayer{
 			UserID:    rp.UserID,
 			Nickname:  rp.Nickname,
@@ -106,6 +116,8 @@ func (mgm *MultiplayerGameManager) CreateGame(roomID string, roomPlayers []*Room
 	}
 
 	mgm.games[roomID] = game
+
+	fmt.Printf("CreateGame: game created with %d players\n", len(game.PlayerOrder))
 
 	// 启动游戏协程
 	go game.run()
@@ -145,8 +157,22 @@ func (mg *MultiplayerGame) Join(userID int, client *Client) error {
 	player.Conn = client
 	player.IsOnline = true
 
-	// 发送当前游戏状态
-	mg.sendGameState(userID)
+	fmt.Printf("Join: user_id=%d, room_id=%s, status=%s\n", userID, mg.RoomID, mg.Status)
+
+	// 如果游戏已经开始，发送当前游戏状态
+	if mg.Status != "waiting" {
+		fmt.Printf("Join: 发送游戏状态给 user_id=%d\n", userID)
+		mg.sendGameStateLocked(userID)
+	} else {
+		// 游戏还没开始，发送等待消息
+		fmt.Printf("Join: 游戏未开始，发送等待消息给 user_id=%d\n", userID)
+		mg.sendToPlayerLocked(userID, GameEvent{
+			Type: "waiting_for_game",
+			Data: map[string]interface{}{
+				"message": "等待其他玩家...",
+			},
+		})
+	}
 
 	return nil
 }
@@ -157,6 +183,9 @@ func (mg *MultiplayerGame) SubmitAction(userID int, action string, amount int) e
 	defer mg.mu.RUnlock()
 
 	// 检查是否是当前玩家
+	if len(mg.PlayerOrder) == 0 {
+		return fmt.Errorf("没有玩家")
+	}
 	currentUserID := mg.PlayerOrder[mg.CurrentPos]
 	if currentUserID != userID {
 		return fmt.Errorf("不是您的回合")
@@ -181,6 +210,11 @@ func (mg *MultiplayerGame) run() {
 
 	// 游戏主循环
 	for mg.Status != "finished" {
+		if mg.isGameOver() {
+			fmt.Printf("run: 游戏结束，只剩一个玩家，直接进入摊牌\n")
+			mg.Status = "showdown"
+		}
+
 		switch mg.Status {
 		case "preflop":
 			mg.runBettingRound("preflop")
@@ -227,6 +261,8 @@ func (mg *MultiplayerGame) startNewHand() {
 	mg.mu.Lock()
 	defer mg.mu.Unlock()
 
+	fmt.Printf("startNewHand: roomID=%s, players=%d\n", mg.RoomID, len(mg.PlayerOrder))
+
 	// 重置状态
 	mg.Status = "preflop"
 	mg.Pot = 0
@@ -255,7 +291,8 @@ func (mg *MultiplayerGame) startNewHand() {
 
 	// 确定庄家位置
 	mg.DealerPos = 0
-	mg.CurrentPos = mg.getNextActivePosition(mg.DealerPos, 3) // 从大盲注后一位开始
+	// 翻牌前从大盲后一位开始
+	mg.CurrentPos = mg.getNextActivePosition(mg.DealerPos, 3)
 
 	// 收取盲注
 	mg.postBlinds()
@@ -269,29 +306,40 @@ func (mg *MultiplayerGame) startNewHand() {
 		},
 	})
 
-	// 给每个玩家发送自己的手牌
+	// 给每个在线玩家发送自己的手牌和完整游戏状态（使用锁安全版本）
 	for userID, cards := range mg.HoleCards {
-		mg.sendToPlayer(userID, GameEvent{
+		player := mg.Players[userID]
+		if !player.IsOnline {
+			continue
+		}
+
+		// 发送手牌
+		mg.sendToPlayerLocked(userID, GameEvent{
 			Type: "hole_cards",
 			Data: map[string]interface{}{
 				"cards": []string{cards[0].ImageFileName(), cards[1].ImageFileName()},
 			},
 		})
+
+		// 发送完整游戏状态
+		mg.sendGameStateLocked(userID)
 	}
+
+	fmt.Printf("startNewHand: 完成，已发送游戏状态给所有在线玩家\n")
 }
 
 // postBlinds 收取盲注
 func (mg *MultiplayerGame) postBlinds() {
-	numPlayers := len(mg.PlayerOrder)
-	sbPos := (mg.DealerPos + 1) % numPlayers
-	bbPos := (mg.DealerPos + 2) % numPlayers
+	_ = len(mg.PlayerOrder)
+	sbPos := mg.getNextActivePosition(mg.DealerPos, 1)
+	bbPos := mg.getNextActivePosition(sbPos, 1)
 
 	sbUserID := mg.PlayerOrder[sbPos]
 	bbUserID := mg.PlayerOrder[bbPos]
 
-	// 小盲注 10
+	// 小盲注
 	sbPlayer := mg.Players[sbUserID]
-	sbAmount := 10
+	sbAmount := mg.SmallBlind
 	if sbPlayer.Chips < sbAmount {
 		sbAmount = sbPlayer.Chips
 		sbPlayer.AllIn = true
@@ -300,9 +348,9 @@ func (mg *MultiplayerGame) postBlinds() {
 	sbPlayer.Bet = sbAmount
 	mg.Pot += sbAmount
 
-	// 大盲注 20
+	// 大盲注
 	bbPlayer := mg.Players[bbUserID]
-	bbAmount := 20
+	bbAmount := mg.BigBlind
 	if bbPlayer.Chips < bbAmount {
 		bbAmount = bbPlayer.Chips
 		bbPlayer.AllIn = true
@@ -332,25 +380,37 @@ func (mg *MultiplayerGame) postBlinds() {
 
 // runBettingRound 运行下注轮
 func (mg *MultiplayerGame) runBettingRound(phase string) {
+	fmt.Printf("runBettingRound: roomID=%s, phase=%s\n", mg.RoomID, phase)
+
 	lastRaisePos := -1
 	betCount := 0
 
 	for {
 		mg.mu.RLock()
+		if mg.CurrentPos < 0 || mg.CurrentPos >= len(mg.PlayerOrder) {
+			mg.mu.RUnlock()
+			break
+		}
 		currentUserID := mg.PlayerOrder[mg.CurrentPos]
 		player := mg.Players[currentUserID]
 		mg.mu.RUnlock()
 
+		fmt.Printf("runBettingRound: 当前玩家 user_id=%d, nickname=%s\n", currentUserID, player.Nickname)
+
 		// 跳过已弃牌或全下的玩家
 		if player.Folded || player.AllIn {
+			fmt.Printf("runBettingRound: 跳过玩家 user_id=%d (folded=%v, allin=%v)\n", currentUserID, player.Folded, player.AllIn)
 			mg.moveToNextPlayer()
 			continue
 		}
 
 		// 检查是否完成一轮
 		if lastRaisePos == mg.CurrentPos && betCount > 0 {
+			fmt.Printf("runBettingRound: 一轮结束\n")
 			break
 		}
+
+		fmt.Printf("runBettingRound: 广播 player_turn 给 user_id=%d\n", currentUserID)
 
 		// 广播轮到该玩家
 		mg.broadcast(GameEvent{
@@ -364,10 +424,17 @@ func (mg *MultiplayerGame) runBettingRound(phase string) {
 		})
 
 		// 等待玩家操作（60秒超时）
+		fmt.Printf("runBettingRound: 等待 user_id=%d 的操作...\n", currentUserID)
 		action, amount := mg.waitForAction(currentUserID, 60)
+		fmt.Printf("runBettingRound: 收到操作 action=%s, amount=%d\n", action, amount)
 
 		// 执行操作
 		mg.executeAction(currentUserID, action, amount)
+
+		// 发送更新后的游戏状态给所有在线玩家
+		mg.mu.RLock()
+		mg.sendGameStateToAllLocked()
+		mg.mu.RUnlock()
 
 		// 广播操作结果
 		mg.broadcast(GameEvent{
@@ -388,7 +455,9 @@ func (mg *MultiplayerGame) runBettingRound(phase string) {
 
 		// 更新位置
 		if action == "raise" || action == "allin" {
+			mg.mu.RLock()
 			lastRaisePos = mg.CurrentPos
+			mg.mu.RUnlock()
 			betCount++
 		}
 
@@ -447,35 +516,26 @@ func (mg *MultiplayerGame) executeAction(userID int, action string, amount int) 
 		}
 
 	case "raise":
-		// 跟注+加注
-		if callAmount > 0 {
-			if player.Chips <= callAmount {
-				// 筹码不够跟注，全下
-				mg.Pot += player.Chips
-				player.Bet += player.Chips
-				player.AllIn = true
-				player.Chips = 0
-			} else {
-				player.Chips -= callAmount
-				player.Bet += callAmount
-			}
+		// 计算最小加注额
+		minRaise := mg.BigBlind
+		if mg.CurrentBet > 0 {
+			minRaise = mg.CurrentBet
 		}
+		// 如果玩家输入的加注额小于最小加注额，使用最小加注额
+		if amount < minRaise {
+			amount = minRaise
+		}
+		totalBet := mg.CurrentBet + amount
+		callAmount := totalBet - player.Bet
 
-		// 额外加注
-		if amount > 0 && player.Chips > 0 {
-			if amount >= player.Chips {
-				// 全下
-				mg.Pot += player.Chips
-				player.Bet += player.Chips
-				player.AllIn = true
-				player.Chips = 0
-			} else {
-				mg.Pot += amount
-				player.Chips -= amount
-				player.Bet += amount
-			}
+		if player.Chips <= callAmount {
+			callAmount = player.Chips
+			player.AllIn = true
 		}
+		player.Chips -= callAmount
+		player.Bet += callAmount
 		mg.CurrentBet = player.Bet
+		mg.Pot += callAmount
 
 	case "allin":
 		if player.Chips > 0 {
@@ -504,6 +564,9 @@ func (mg *MultiplayerGame) dealFlop() {
 	mg.mu.Lock()
 	defer mg.mu.Unlock()
 
+	// 先烧一张牌
+	mg.Game.Deck.Deal()
+
 	for i := 0; i < 3; i++ {
 		mg.CommunityCards = append(mg.CommunityCards, mg.Game.Deck.Deal())
 	}
@@ -515,12 +578,18 @@ func (mg *MultiplayerGame) dealFlop() {
 			"phase": "flop",
 		},
 	})
+
+	// 翻牌后从庄家后一位开始
+	mg.CurrentPos = mg.getNextActivePosition(mg.DealerPos, 1)
 }
 
 // dealTurn 发转牌
 func (mg *MultiplayerGame) dealTurn() {
 	mg.mu.Lock()
 	defer mg.mu.Unlock()
+
+	// 先烧一张牌
+	mg.Game.Deck.Deal()
 
 	mg.CommunityCards = append(mg.CommunityCards, mg.Game.Deck.Deal())
 
@@ -531,12 +600,18 @@ func (mg *MultiplayerGame) dealTurn() {
 			"phase": "turn",
 		},
 	})
+
+	// 转牌后从庄家后一位开始
+	mg.CurrentPos = mg.getNextActivePosition(mg.DealerPos, 1)
 }
 
 // dealRiver 发河牌
 func (mg *MultiplayerGame) dealRiver() {
 	mg.mu.Lock()
 	defer mg.mu.Unlock()
+
+	// 先烧一张牌
+	mg.Game.Deck.Deal()
 
 	mg.CommunityCards = append(mg.CommunityCards, mg.Game.Deck.Deal())
 
@@ -547,6 +622,9 @@ func (mg *MultiplayerGame) dealRiver() {
 			"phase": "river",
 		},
 	})
+
+	// 河牌后从庄家后一位开始
+	mg.CurrentPos = mg.getNextActivePosition(mg.DealerPos, 1)
 }
 
 // runShowdown 运行摊牌
@@ -556,8 +634,9 @@ func (mg *MultiplayerGame) runShowdown() {
 
 	// 收集所有未弃牌玩家的牌
 	type playerHand struct {
-		userID int
-		hand   Hand
+		userID    int
+		hand      Hand
+		bestCards []Card
 	}
 
 	var hands []playerHand
@@ -568,7 +647,8 @@ func (mg *MultiplayerGame) runShowdown() {
 			holeCards := mg.HoleCards[userID]
 			allCards := append(holeCards, mg.CommunityCards...)
 			hand := EvaluateHand(allCards)
-			hands = append(hands, playerHand{userID, hand})
+			bestCards := hand.Cards
+			hands = append(hands, playerHand{userID, hand, bestCards})
 			activePlayers = append(activePlayers, player)
 		}
 	}
@@ -581,12 +661,28 @@ func (mg *MultiplayerGame) runShowdown() {
 		// 只有一个玩家，直接获胜
 		winner := activePlayers[0]
 		winner.Chips += mg.Pot
+
+		// 获取胜者最佳5张牌
+		winnerUserID := winner.UserID
+		holeCards := mg.HoleCards[winnerUserID]
+		allCards := append(holeCards, mg.CommunityCards...)
+		winnerHand := EvaluateHand(allCards)
+		winnerBestCards := winnerHand.Cards
+
+		showdownCards := make([]string, len(winnerBestCards))
+		for i, card := range winnerBestCards {
+			showdownCards[i] = card.ImageFileName()
+		}
+
 		mg.broadcast(GameEvent{
 			Type: "showdown_result",
 			Data: map[string]interface{}{
-				"winners": []int{winner.UserID},
-				"pot":     mg.Pot,
-				"hands":   mg.getPlayerHands(),
+				"winners":          []int{winner.UserID},
+				"pot":              mg.Pot,
+				"hands":            mg.getPlayerHands(),
+				"showdown_cards":   showdownCards,
+				"winner_name":      winner.Nickname,
+				"winner_hand_rank": getHandRankName(winnerHand.Rank),
 			},
 		})
 		return
@@ -595,12 +691,14 @@ func (mg *MultiplayerGame) runShowdown() {
 	// 比较牌型找出获胜者
 	bestHand := hands[0].hand
 	var winners []int
+	var winnerBestCards []Card
 
 	for _, ph := range hands {
 		cmp := CompareHands(ph.hand, bestHand)
 		if cmp > 0 {
 			bestHand = ph.hand
 			winners = []int{ph.userID}
+			winnerBestCards = ph.bestCards
 		} else if cmp == 0 {
 			winners = append(winners, ph.userID)
 		}
@@ -618,14 +716,29 @@ func (mg *MultiplayerGame) runShowdown() {
 		mg.Players[userID].Chips += amount
 	}
 
+	// 获取第一个胜者的昵称
+	var winnerName string
+	if len(winners) > 0 {
+		winnerName = mg.Players[winners[0]].Nickname
+	}
+
+	// 准备展示胜者最佳5张牌
+	showdownCards := make([]string, len(winnerBestCards))
+	for i, card := range winnerBestCards {
+		showdownCards[i] = card.ImageFileName()
+	}
+
 	// 广播结果
 	mg.broadcast(GameEvent{
 		Type: "showdown_result",
 		Data: map[string]interface{}{
-			"winners":    winners,
-			"pot":        mg.Pot,
-			"hands":      mg.getPlayerHands(),
-			"best_rank":  getHandRankName(bestHand.Rank),
+			"winners":          winners,
+			"pot":              mg.Pot,
+			"hands":            mg.getPlayerHands(),
+			"best_rank":        getHandRankName(bestHand.Rank),
+			"showdown_cards":   showdownCards,
+			"winner_name":      winnerName,
+			"winner_hand_rank": getHandRankName(bestHand.Rank),
 		},
 	})
 }
@@ -639,7 +752,7 @@ func (mg *MultiplayerGame) getNextActivePosition(startPos int, offset int) int {
 		pos := (startPos + i) % numPlayers
 		userID := mg.PlayerOrder[pos]
 		player := mg.Players[userID]
-		if !player.Folded && !player.AllIn && player.Chips > 0 {
+		if !player.Folded && !player.AllIn && player.Chips >= 0 {
 			count++
 			if count == offset {
 				return pos
@@ -655,7 +768,7 @@ func (mg *MultiplayerGame) moveToNextPlayer() {
 		mg.CurrentPos = (mg.CurrentPos + i) % numPlayers
 		userID := mg.PlayerOrder[mg.CurrentPos]
 		player := mg.Players[userID]
-		if !player.Folded && !player.AllIn && player.Chips > 0 {
+		if !player.Folded && !player.AllIn && player.Chips >= 0 {
 			return
 		}
 	}
@@ -695,13 +808,10 @@ func (mg *MultiplayerGame) getPlayerHands() []map[string]interface{} {
 	for userID, player := range mg.Players {
 		if !player.Folded {
 			holeCards := mg.HoleCards[userID]
-			allCards := append(holeCards, mg.CommunityCards...)
-			hand := EvaluateHand(allCards)
 			result = append(result, map[string]interface{}{
 				"user_id":    userID,
 				"nickname":   player.Nickname,
 				"hole_cards": []string{holeCards[0].ImageFileName(), holeCards[1].ImageFileName()},
-				"hand_rank":  getHandRankName(hand.Rank),
 			})
 		}
 	}
@@ -756,10 +866,87 @@ func (mg *MultiplayerGame) broadcastLoop() {
 
 func (mg *MultiplayerGame) sendToPlayer(userID int, event GameEvent) {
 	mg.mu.RLock()
-	player, exists := mg.Players[userID]
-	mg.mu.RUnlock()
+	defer mg.mu.RUnlock()
+	mg.sendToPlayerLocked(userID, event)
+}
 
-	if !exists || player.Conn == nil {
+func (mg *MultiplayerGame) sendGameState(userID int) {
+	mg.mu.RLock()
+	defer mg.mu.RUnlock()
+	mg.sendGameStateLocked(userID)
+}
+
+// sendGameStateLocked 发送游戏状态（已持有锁）
+func (mg *MultiplayerGame) sendGameStateLocked(userID int) {
+	fmt.Printf("sendGameStateLocked: roomID=%s, userID=%d, totalPlayers=%d\n", mg.RoomID, userID, len(mg.PlayerOrder))
+
+	numPlayers := len(mg.PlayerOrder)
+	dealerUserID := mg.PlayerOrder[mg.DealerPos]
+	sbUserID := mg.PlayerOrder[(mg.DealerPos+1)%numPlayers]
+	bbUserID := mg.PlayerOrder[(mg.DealerPos+2)%numPlayers]
+
+	players := make([]map[string]interface{}, 0)
+	for _, uid := range mg.PlayerOrder {
+		p := mg.Players[uid]
+		playerData := map[string]interface{}{
+			"user_id":        uid,
+			"nickname":       p.Nickname,
+			"chips":          p.Chips,
+			"bet":            p.Bet,
+			"folded":         p.Folded,
+			"all_in":         p.AllIn,
+			"is_dealer":      uid == dealerUserID,
+			"is_small_blind": uid == sbUserID,
+			"is_big_blind":   uid == bbUserID,
+		}
+
+		if uid == userID {
+			if cards, ok := mg.HoleCards[uid]; ok {
+				playerData["cards"] = []string{cards[0].ImageFileName(), cards[1].ImageFileName()}
+			}
+			playerData["is_me"] = true
+		} else {
+			playerData["cards"] = []string{"bm.png", "bm.png"}
+			playerData["is_me"] = false
+		}
+
+		players = append(players, playerData)
+	}
+
+	var currentPlayerID int
+	if mg.CurrentPos >= 0 && mg.CurrentPos < len(mg.PlayerOrder) {
+		currentPlayerID = mg.PlayerOrder[mg.CurrentPos]
+	}
+
+	mg.sendToPlayerLocked(userID, GameEvent{
+		Type: "game_state",
+		Data: map[string]interface{}{
+			"status":          mg.Status,
+			"phase":           mg.Status,
+			"pot":             mg.Pot,
+			"current_bet":     mg.CurrentBet,
+			"community_cards": mg.getCommunityCardImages(),
+			"players":         players,
+			"current_player":  currentPlayerID,
+			"action_log":      mg.ActionLog,
+		},
+	})
+}
+
+// sendGameStateToAllLocked 发送游戏状态给所有在线玩家（已持有锁）
+func (mg *MultiplayerGame) sendGameStateToAllLocked() {
+	for userID := range mg.Players {
+		player := mg.Players[userID]
+		if player.IsOnline {
+			mg.sendGameStateLocked(userID)
+		}
+	}
+}
+
+// sendToPlayerLocked 向指定玩家发送消息（已持有锁）
+func (mg *MultiplayerGame) sendToPlayerLocked(userID int, event GameEvent) {
+	player, exists := mg.Players[userID]
+	if !exists || player.Conn == nil || !player.IsOnline {
 		return
 	}
 
@@ -772,52 +959,6 @@ func (mg *MultiplayerGame) sendToPlayer(userID int, event GameEvent) {
 	case player.Conn.Send <- data:
 	default:
 	}
-}
-
-func (mg *MultiplayerGame) sendGameState(userID int) {
-	mg.mu.RLock()
-	defer mg.mu.RUnlock()
-
-	players := make([]map[string]interface{}, 0)
-	for _, uid := range mg.PlayerOrder {
-		p := mg.Players[uid]
-		playerData := map[string]interface{}{
-			"user_id":  uid,
-			"nickname": p.Nickname,
-			"chips":    p.Chips,
-			"bet":      p.Bet,
-			"folded":   p.Folded,
-			"all_in":   p.AllIn,
-		}
-
-		// 发送该玩家的手牌
-		if uid == userID {
-			if cards, ok := mg.HoleCards[uid]; ok {
-				playerData["cards"] = []string{cards[0].ImageFileName(), cards[1].ImageFileName()}
-			}
-			playerData["is_me"] = true
-		} else {
-			// 其他玩家显示背面
-			playerData["cards"] = []string{"bm.png", "bm.png"}
-			playerData["is_me"] = false
-		}
-
-		players = append(players, playerData)
-	}
-
-	mg.sendToPlayer(userID, GameEvent{
-		Type: "game_state",
-		Data: map[string]interface{}{
-			"status":          mg.Status,
-			"phase":           mg.Status,
-			"pot":             mg.Pot,
-			"current_bet":     mg.CurrentBet,
-			"community_cards": mg.getCommunityCardImages(),
-			"players":         players,
-			"current_pos":     mg.CurrentPos,
-			"action_log":      mg.ActionLog,
-		},
-	})
 }
 
 // Stop 停止游戏

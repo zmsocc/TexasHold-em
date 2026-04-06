@@ -765,15 +765,20 @@ func HandleStartGame(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	fmt.Printf("HandleStartGame: 所有检查通过，准备创建游戏\n")
+
 	// 创建多人游戏实例
-	_, err = multiplayerManager.CreateGame(req.RoomID, players)
+	fmt.Printf("HandleStartGame: 准备创建游戏，roomID=%s, players=%d\n", req.RoomID, len(players))
+	game, err := multiplayerManager.CreateGame(req.RoomID, players)
 	if err != nil {
+		fmt.Printf("HandleStartGame: 创建游戏失败: %v\n", err)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
 			"message": "创建游戏失败: " + err.Error(),
 		})
 		return
 	}
+	fmt.Printf("HandleStartGame: 游戏创建成功，game=%v\n", game)
 
 	// 更新房间状态
 	err = UpdateRoomStatus(req.RoomID, "gaming")
@@ -1013,6 +1018,9 @@ func getScheme(r *http.Request) string {
 func broadcastToRoom(roomID, event string, data interface{}) {
 	// 这里将通过WebSocketManager实现
 	if wsManager != nil {
+		fmt.Printf("Broadcasting to room %s: event=%s\n", roomID, event)
 		wsManager.BroadcastToRoom(roomID, event, data)
+	} else {
+		fmt.Printf("Warning: wsManager is nil, cannot broadcast to room %s\n", roomID)
 	}
 }

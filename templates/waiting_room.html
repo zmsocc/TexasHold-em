@@ -518,11 +518,14 @@
                     html += `<button class="kick-btn" onclick="kickPlayer(${player.user_id})">踢出</button>`;
                 }
 
+                // 房主始终显示为已准备
+                const isReady = isPlayerHost ? true : player.is_ready;
+
                 html += `
                     <div class="player-avatar">${player.nickname.charAt(0).toUpperCase()}</div>
                     <div class="player-name">${player.nickname} ${isMe ? '(我)' : ''}</div>
-                    <div class="player-status ${player.is_ready ? 'status-ready' : 'status-not-ready'}">
-                        ${player.is_ready ? '✅ 已准备' : '⏳ 未准备'}
+                    <div class="player-status ${isReady ? 'status-ready' : 'status-not-ready'}">
+                        ${isReady ? '✅ 已准备' : '⏳ 未准备'}
                     </div>
                 `;
 
@@ -549,22 +552,30 @@
             const container = document.getElementById('actionButtons');
             
             if (roomData.status === 'gaming') {
-                container.innerHTML = `
+                let html = `
                     <button class="btn btn-start" onclick="goToGame()">进入游戏</button>
                 `;
+                // 只有房主显示开始游戏按钮（如果游戏还没真正开始）
+                if (isHost && roomData.current_players >= 2) {
+                    html += `<button class="btn btn-start" onclick="startGame()" style="margin-top: 10px;">🎮 重新开始</button>`;
+                }
+                html += `<button class="btn btn-leave" onclick="leaveRoom()" style="margin-top: 10px;">🚪 退出游戏</button>`;
+                container.innerHTML = html;
                 return;
             }
 
             let html = '';
 
-            // 准备/取消准备按钮
-            if (isReady) {
-                html += `<button class="btn btn-cancel" onclick="setReady(false)">❌ 取消准备</button>`;
-            } else {
-                html += `<button class="btn btn-ready" onclick="setReady(true)">✅ 准备</button>`;
+            // 非房主显示准备/取消准备按钮
+            if (!isHost) {
+                if (isReady) {
+                    html += `<button class="btn btn-cancel" onclick="setReady(false)">❌ 取消准备</button>`;
+                } else {
+                    html += `<button class="btn btn-ready" onclick="setReady(true)">✅ 准备</button>`;
+                }
             }
 
-            // 房主开始游戏按钮
+            // 房主显示开始游戏按钮
             if (isHost) {
                 const hasEnoughPlayers = roomData.current_players >= 2;
                 const allReady = roomData.players.every(p => 
@@ -577,7 +588,7 @@
                 if (!hasEnoughPlayers) {
                     html += '<div style="color: #ff6b6b; font-size: 12px; text-align: center; margin-top: 5px;">至少需要2人才能开始游戏</div>';
                 } else if (!allReady) {
-                    html += '<div style="color: #888; font-size: 12px; text-align: center; margin-top: 5px;">所有玩家准备后才能开始</div>';
+                    html += '<div style="color: #888; font-size: 12px; text-align: center; margin-top: 5px;">等待所有玩家准备...</div>';
                 }
             }
 

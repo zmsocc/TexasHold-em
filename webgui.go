@@ -1208,7 +1208,14 @@ func (g *WebGUIGame) showdown() {
 	var winners []*Player
 	var winnerCards []Card
 
-	if len(activePlayers) == 1 {
+	if len(activePlayers) == 0 {
+		// 所有玩家都弃牌，这种情况不应该发生，但做保护
+		winnerText = "所有玩家都弃牌，游戏结束"
+		g.winnerText = winnerText
+		g.gameOver = true
+		g.mu.Unlock()
+		return
+	} else if len(activePlayers) == 1 {
 		winner := activePlayers[0]
 		winner.Chips += g.game.Pot
 		winnerText = fmt.Sprintf("%s 获胜！赢得 %d 筹码！", winner.Name, g.game.Pot)

@@ -124,8 +124,17 @@ func (wm *WebSocketManager) Start() {
 // BroadcastToRoom 向房间广播消息
 func (wm *WebSocketManager) BroadcastToRoom(roomID, event string, data interface{}) {
 	if wm == nil {
+		fmt.Printf("BroadcastToRoom: wsManager is nil\n")
 		return
 	}
+
+	wm.mu.RLock()
+	room, exists := wm.rooms[roomID]
+	clientCount := len(room)
+	wm.mu.RUnlock()
+
+	fmt.Printf("BroadcastToRoom: roomID=%s, event=%s, clients=%d, exists=%v\n", roomID, event, clientCount, exists)
+
 	wm.broadcast <- &BroadcastMessage{
 		RoomID: roomID,
 		Event:  event,
@@ -239,7 +248,10 @@ func (c *Client) handleMessage(msg map[string]interface{}) {
 					wsManager.rooms[roomID] = make(map[int]*Client)
 				}
 				wsManager.rooms[roomID][c.UserID] = c
+				clientCount := len(wsManager.rooms[roomID])
 				wsManager.mu.Unlock()
+
+				fmt.Printf("Client joined room: user_id=%d, room_id=%s, total_clients=%d\n", c.UserID, roomID, clientCount)
 
 				// 发送确认消息
 				c.Send <- mustJSON(WebSocketMessage{
@@ -274,12 +286,16 @@ func (c *Client) handleMessage(msg map[string]interface{}) {
 
 	case "game_action":
 		// 游戏操作
+		fmt.Printf("handleMessage: game_action, user_id=%d, room_id=%s\n", c.UserID, c.RoomID)
+		
 		if c.RoomID == "" {
+			fmt.Printf("handleMessage: game_action failed, room_id is empty\n")
 			return
 		}
 
 		game := multiplayerManager.GetGame(c.RoomID)
 		if game == nil {
+			fmt.Printf("handleMessage: game_action failed, game not found for room_id=%s\n", c.RoomID)
 			return
 		}
 
@@ -288,25 +304,35 @@ func (c *Client) handleMessage(msg map[string]interface{}) {
 		if amt, ok := msg["amount"].(float64); ok {
 			amount = int(amt)
 		}
+		
+		fmt.Printf("handleMessage: 提交操作 action=%s, amount=%d, user_id=%d\n", action, amount, c.UserID)
 
 		// 提交操作
 		err := game.SubmitAction(c.UserID, action, amount)
 		if err != nil {
+			fmt.Printf("handleMessage: 操作失败: %v\n", err)
 			c.Send <- mustJSON(WebSocketMessage{
 				Event: "action_error",
 				Data:  map[string]string{"error": err.Error()},
 			})
+		} else {
+			fmt.Printf("handleMessage: 操作成功提交\n")
 		}
 
 	case "join_game":
 		// 加入游戏（从房间等待页面进入游戏）
+		fmt.Printf("handleMessage: join_game, user_id=%d, room_id=%s\n", c.UserID, c.RoomID)
 		if c.RoomID == "" {
+			fmt.Printf("handleMessage: join_game failed, room_id is empty\n")
 			return
 		}
 
 		game := multiplayerManager.GetGame(c.RoomID)
 		if game != nil {
+			fmt.Printf("handleMessage: joining game, user_id=%d\n", c.UserID)
 			game.Join(c.UserID, c)
+		} else {
+			fmt.Printf("handleMessage: game not found for room_id=%s\n", c.RoomID)
 		}
 	}
 }
