@@ -282,6 +282,9 @@ func (mg *MultiplayerGame) run() {
 		}
 	}
 
+	// 游戏结束，移动庄家位
+	mg.moveDealerButton()
+
 	// 游戏结束，广播结果
 	mg.broadcast(GameEvent{
 		Type: "game_over",
@@ -332,9 +335,16 @@ func (mg *MultiplayerGame) startNewHand() {
 	// 收取盲注（同时确定小盲、大盲位置）
 	mg.postBlinds()
 
-	// 翻牌前：从大盲左侧（UTG）开始
-	// 小盲=DealerPos+1, 大盲=DealerPos+2, UTG=DealerPos+3
-	mg.CurrentPos = mg.getNextActivePosition(mg.DealerPos, 3)
+	// 设置翻牌前起始位置
+	if len(mg.PlayerOrder) == 2 {
+		// 两人对局：庄家兼任小盲，从庄家/小盲开始行动
+		// 玩家A(庄家/小盲)先行动，可以选择：弃牌、跟注(补齐到大盲)、加注
+		// 然后轮到玩家B(大盲)行动
+		mg.CurrentPos = mg.DealerPos
+	} else {
+		// 多人对局：从大盲左侧（UTG）开始
+		mg.CurrentPos = mg.getNextActivePosition(mg.DealerPos, 3)
+	}
 
 	// 广播游戏开始
 	mg.broadcast(GameEvent{
@@ -369,12 +379,27 @@ func (mg *MultiplayerGame) startNewHand() {
 
 // postBlinds 收取盲注
 func (mg *MultiplayerGame) postBlinds() {
-	_ = len(mg.PlayerOrder)
-	sbPos := mg.getNextActivePosition(mg.DealerPos, 1)
-	bbPos := mg.getNextActivePosition(sbPos, 1)
+	numPlayers := len(mg.PlayerOrder)
 
-	sbUserID := mg.PlayerOrder[sbPos]
-	bbUserID := mg.PlayerOrder[bbPos]
+	var sbPos, bbPos int
+	var sbUserID, bbUserID int
+
+	if numPlayers == 2 {
+		// 两人对局：庄家兼任小盲
+		// 庄家 = 小盲，另一位 = 大盲
+		sbPos = mg.DealerPos
+		// 大盲是另一位玩家（直接计算，不要用getNextActivePosition）
+		bbPos = (mg.DealerPos + 1) % numPlayers
+	} else {
+		// 多人对局：小盲在庄家左侧，大盲在小盲左侧
+		sbPos = mg.getNextActivePosition(mg.DealerPos, 1)
+		bbPos = mg.getNextActivePosition(sbPos, 1)
+	}
+
+	sbUserID = mg.PlayerOrder[sbPos]
+	bbUserID = mg.PlayerOrder[bbPos]
+
+	fmt.Printf("postBlinds: 小盲位置=%d(user_id=%d), 大盲位置=%d(user_id=%d)\n", sbPos, sbUserID, bbPos, bbUserID)
 
 	// 小盲注
 	sbPlayer := mg.Players[sbUserID]
@@ -386,6 +411,7 @@ func (mg *MultiplayerGame) postBlinds() {
 	sbPlayer.Chips -= sbAmount
 	sbPlayer.Bet = sbAmount
 	mg.Pot += sbAmount
+	fmt.Printf("postBlinds: 小盲玩家(user_id=%d)扣除%d, 剩余%d\n", sbUserID, sbAmount, sbPlayer.Chips)
 
 	// 大盲注
 	bbPlayer := mg.Players[bbUserID]
@@ -397,6 +423,7 @@ func (mg *MultiplayerGame) postBlinds() {
 	bbPlayer.Chips -= bbAmount
 	bbPlayer.Bet = bbAmount
 	mg.Pot += bbAmount
+	fmt.Printf("postBlinds: 大盲玩家(user_id=%d)扣除%d, 剩余%d, 底池=%d\n", bbUserID, bbAmount, bbPlayer.Chips, mg.Pot)
 
 	mg.CurrentBet = bbAmount
 
@@ -1062,6 +1089,21 @@ func (mg *MultiplayerGame) getPlayerHands() []map[string]interface{} {
 	return result
 }
 
+// moveDealerButton 移动庄家位到下一个玩家
+func (mg *MultiplayerGame) moveDealerButton() {
+	mg.mu.Lock()
+	defer mg.mu.Unlock()
+
+	numPlayers := len(mg.PlayerOrder)
+	if numPlayers == 0 {
+		return
+	}
+
+	// 庄家位顺时针移动一位
+	mg.DealerPos = (mg.DealerPos + 1) % numPlayers
+	fmt.Printf("moveDealerButton: 庄家位移动到位置 %d, user_id=%d\n", mg.DealerPos, mg.PlayerOrder[mg.DealerPos])
+}
+
 func (mg *MultiplayerGame) getGameResult() map[string]interface{} {
 	players := make([]map[string]interface{}, 0)
 	for _, userID := range mg.PlayerOrder {
@@ -1126,8 +1168,18 @@ func (mg *MultiplayerGame) sendGameStateLocked(userID int) {
 
 	numPlayers := len(mg.PlayerOrder)
 	dealerUserID := mg.PlayerOrder[mg.DealerPos]
-	sbUserID := mg.PlayerOrder[(mg.DealerPos+1)%numPlayers]
-	bbUserID := mg.PlayerOrder[(mg.DealerPos+2)%numPlayers]
+
+	// 计算小盲和大盲位置
+	var sbUserID, bbUserID int
+	if numPlayers == 2 {
+		// 两人对局：庄家兼任小盲
+		sbUserID = dealerUserID
+		bbUserID = mg.PlayerOrder[(mg.DealerPos+1)%numPlayers]
+	} else {
+		// 多人对局：小盲在庄家左侧，大盲在小盲左侧
+		sbUserID = mg.PlayerOrder[(mg.DealerPos+1)%numPlayers]
+		bbUserID = mg.PlayerOrder[(mg.DealerPos+2)%numPlayers]
+	}
 
 	players := make([]map[string]interface{}, 0)
 	for _, uid := range mg.PlayerOrder {
