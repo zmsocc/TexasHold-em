@@ -227,22 +227,46 @@ func (mg *MultiplayerGame) run() {
 		switch mg.Status {
 		case "preflop":
 			mg.runBettingRound("preflop")
-			if !mg.isGameOver() {
-				mg.dealFlop()
-				mg.Status = "flop"
+			if mg.isGameOver() {
+				break
 			}
+			// 检查是否所有未弃牌玩家都全下
+			if mg.allActivePlayersAllIn() {
+				fmt.Printf("run: 所有活跃玩家都全下，跳过后续下注轮，直接发完公共牌\n")
+				mg.dealRemainingCommunityCards()
+				mg.Status = "showdown"
+				break
+			}
+			mg.dealFlop()
+			mg.Status = "flop"
 		case "flop":
 			mg.runBettingRound("flop")
-			if !mg.isGameOver() {
-				mg.dealTurn()
-				mg.Status = "turn"
+			if mg.isGameOver() {
+				break
 			}
+			// 检查是否所有未弃牌玩家都全下
+			if mg.allActivePlayersAllIn() {
+				fmt.Printf("run: 所有活跃玩家都全下，跳过后续下注轮，直接发完公共牌\n")
+				mg.dealRemainingCommunityCards()
+				mg.Status = "showdown"
+				break
+			}
+			mg.dealTurn()
+			mg.Status = "turn"
 		case "turn":
 			mg.runBettingRound("turn")
-			if !mg.isGameOver() {
-				mg.dealRiver()
-				mg.Status = "river"
+			if mg.isGameOver() {
+				break
 			}
+			// 检查是否所有未弃牌玩家都全下
+			if mg.allActivePlayersAllIn() {
+				fmt.Printf("run: 所有活跃玩家都全下，跳过后续下注轮，直接发完公共牌\n")
+				mg.dealRemainingCommunityCards()
+				mg.Status = "showdown"
+				break
+			}
+			mg.dealRiver()
+			mg.Status = "river"
 		case "river":
 			mg.runBettingRound("river")
 			mg.Status = "showdown"
@@ -391,12 +415,13 @@ func (mg *MultiplayerGame) postBlinds() {
 func (mg *MultiplayerGame) runBettingRound(phase string) {
 	fmt.Printf("runBettingRound: roomID=%s, phase=%s\n", mg.RoomID, phase)
 
-	var lastRaisePos int = -1
-	var startPos int
+	var lastRaiseUserID int = -1
+	var startUserID int
+	var playersHaveActed map[int]bool = make(map[int]bool)
 
-	// 记录起始位置（用于检测全过牌）
+	// 记录起始玩家
 	mg.mu.RLock()
-	startPos = mg.CurrentPos
+	startUserID = mg.PlayerOrder[mg.CurrentPos]
 	mg.mu.RUnlock()
 
 	for {
@@ -418,15 +443,64 @@ func (mg *MultiplayerGame) runBettingRound(phase string) {
 			continue
 		}
 
-		// 检查条件A：最后一位下注/加注的玩家的下注额被所有未弃牌的玩家跟注
-		if mg.canEndRound(lastRaisePos) {
-			fmt.Printf("runBettingRound: 满足条件A，轮次结束\n")
-			break
-		}
+		// 检查轮次结束条件
+		mg.mu.RLock()
+		roundComplete := false
 
-		// 检查条件B：所有人都过牌
-		if lastRaisePos == -1 && mg.CurrentPos == startPos && mg.allPlayersCheckedSince(startPos) {
-			fmt.Printf("runBettingRound: 满足条件B（全过牌），轮次结束\n")
+		if lastRaiseUserID != -1 {
+			// 有加注的情况：
+			// 1. 所有未弃牌玩家都跟注到了相同金额
+			// 2. 已经回到了加注者
+			allCalled := true
+			for _, uid := range mg.PlayerOrder {
+				p := mg.Players[uid]
+				if p.Folded {
+					continue
+				}
+				if p.Bet != mg.CurrentBet && !p.AllIn {
+					allCalled = false
+					break
+				}
+			}
+
+			if allCalled && playersHaveActed[currentUserID] && currentUserID == lastRaiseUserID {
+				roundComplete = true
+			}
+		} else {
+			// 没有加注的情况：
+			// 1. 所有未弃牌玩家都过牌了
+			// 2. 绕了一圈回到了起始玩家
+			allChecked := true
+			for _, uid := range mg.PlayerOrder {
+				p := mg.Players[uid]
+				if p.Folded || p.AllIn {
+					continue
+				}
+				if p.Bet > 0 {
+					allChecked = false
+					break
+				}
+			}
+			_ = allChecked // 避免未使用变量警告
+			for _, uid := range mg.PlayerOrder {
+				p := mg.Players[uid]
+				if p.Folded || p.AllIn {
+					continue
+				}
+				if p.Bet > 0 {
+					allChecked = false
+					break
+				}
+			}
+
+			if playersHaveActed[currentUserID] && currentUserID == startUserID {
+				roundComplete = true
+			}
+		}
+		mg.mu.RUnlock()
+
+		if roundComplete {
+			fmt.Printf("runBettingRound: 轮次结束\n")
 			break
 		}
 
@@ -447,6 +521,9 @@ func (mg *MultiplayerGame) runBettingRound(phase string) {
 		fmt.Printf("runBettingRound: 等待 user_id=%d 的操作...\n", currentUserID)
 		action, amount := mg.waitForAction(currentUserID, 60)
 		fmt.Printf("runBettingRound: 收到操作 action=%s, amount=%d\n", action, amount)
+
+		// 标记该玩家已操作
+		playersHaveActed[currentUserID] = true
 
 		// 执行操作
 		mg.executeAction(currentUserID, action, amount)
@@ -473,10 +550,12 @@ func (mg *MultiplayerGame) runBettingRound(phase string) {
 			return
 		}
 
-		// 更新位置
+		// 更新最后加注位置
 		if action == "raise" || action == "allin" {
 			mg.mu.RLock()
-			lastRaisePos = mg.CurrentPos
+			lastRaiseUserID = currentUserID
+			// 加注后，重置已操作标记，所有玩家需要重新响应
+			playersHaveActed = make(map[int]bool)
 			mg.mu.RUnlock()
 		}
 
@@ -916,6 +995,63 @@ func (mg *MultiplayerGame) resetBets() {
 	for _, player := range mg.Players {
 		player.Bet = 0
 	}
+}
+
+// allActivePlayersAllIn 检查所有未弃牌玩家是否都全下
+func (mg *MultiplayerGame) allActivePlayersAllIn() bool {
+	mg.mu.RLock()
+	defer mg.mu.RUnlock()
+
+	activePlayerCount := 0
+	allInCount := 0
+
+	for _, player := range mg.Players {
+		if player.Folded {
+			continue
+		}
+		activePlayerCount++
+		if player.AllIn {
+			allInCount++
+		}
+	}
+
+	// 至少有一个活跃玩家，且所有活跃玩家都全下
+	return activePlayerCount >= 1 && allInCount == activePlayerCount
+}
+
+// dealRemainingCommunityCards 发完剩余的所有公共牌
+func (mg *MultiplayerGame) dealRemainingCommunityCards() {
+	mg.mu.Lock()
+	defer mg.mu.Unlock()
+
+	fmt.Printf("dealRemainingCommunityCards: 开始发剩余公共牌，当前公共牌=%d\n", len(mg.CommunityCards))
+
+	for len(mg.CommunityCards) < 5 {
+		if mg.Game == nil || mg.Game.Deck == nil {
+			fmt.Printf("dealRemainingCommunityCards: 牌组为空，无法发牌\n")
+			break
+		}
+		card := mg.Game.Deck.Deal()
+		if (card == Card{}) {
+			fmt.Printf("dealRemainingCommunityCards: 没有更多牌了\n")
+			break
+		}
+		mg.CommunityCards = append(mg.CommunityCards, card)
+		fmt.Printf("dealRemainingCommunityCards: 发了一张牌 %s\n", card.ImageFileName())
+	}
+
+	fmt.Printf("dealRemainingCommunityCards: 发完剩余公共牌，最终公共牌=%d\n", len(mg.CommunityCards))
+
+	// 发送更新后的游戏状态给所有在线玩家
+	mg.sendGameStateToAllLocked()
+
+	// 广播公共牌
+	mg.broadcast(GameEvent{
+		Type: "community_cards",
+		Data: map[string]interface{}{
+			"cards": mg.getCommunityCardImages(),
+		},
+	})
 }
 
 func (mg *MultiplayerGame) getCommunityCardImages() []string {
