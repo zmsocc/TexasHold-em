@@ -238,6 +238,8 @@ func (mg *MultiplayerGame) run() {
 				break
 			}
 			mg.dealFlop()
+			// 翻牌后：从小盲开始（DealerPos+1）
+			mg.CurrentPos = mg.getNextActivePosition(mg.DealerPos, 1)
 			mg.Status = "flop"
 		case "flop":
 			mg.runBettingRound("flop")
@@ -252,6 +254,8 @@ func (mg *MultiplayerGame) run() {
 				break
 			}
 			mg.dealTurn()
+			// 转牌后：从小盲开始
+			mg.CurrentPos = mg.getNextActivePosition(mg.DealerPos, 1)
 			mg.Status = "turn"
 		case "turn":
 			mg.runBettingRound("turn")
@@ -266,6 +270,8 @@ func (mg *MultiplayerGame) run() {
 				break
 			}
 			mg.dealRiver()
+			// 河牌后：从小盲开始
+			mg.CurrentPos = mg.getNextActivePosition(mg.DealerPos, 1)
 			mg.Status = "river"
 		case "river":
 			mg.runBettingRound("river")
@@ -322,13 +328,13 @@ func (mg *MultiplayerGame) startNewHand() {
 	// 保存剩余牌用于发公共牌
 	mg.Game = &Game{Deck: deck}
 
-	// 确定庄家位置
-	mg.DealerPos = 0
-	// 翻牌前从大盲后一位开始
-	mg.CurrentPos = mg.getNextActivePosition(mg.DealerPos, 3)
-
-	// 收取盲注
+	// 确定庄家位置（每局结束后会更新）
+	// 收取盲注（同时确定小盲、大盲位置）
 	mg.postBlinds()
+
+	// 翻牌前：从大盲左侧（UTG）开始
+	// 小盲=DealerPos+1, 大盲=DealerPos+2, UTG=DealerPos+3
+	mg.CurrentPos = mg.getNextActivePosition(mg.DealerPos, 3)
 
 	// 广播游戏开始
 	mg.broadcast(GameEvent{
@@ -415,13 +421,15 @@ func (mg *MultiplayerGame) postBlinds() {
 func (mg *MultiplayerGame) runBettingRound(phase string) {
 	fmt.Printf("runBettingRound: roomID=%s, phase=%s\n", mg.RoomID, phase)
 
-	var lastRaiseUserID int = -1
-	var startUserID int
-	var playersHaveActed map[int]bool = make(map[int]bool)
+	// 记录最后加注的玩家ID，-1表示本轮无人加注
+	var lastRaiserID int = -1
+	// 记录本轮第一个行动的玩家（用于检测绕了一圈）
+	var firstActorID int
+	// 记录本轮已经行动过的玩家
+	actionedPlayers := make(map[int]bool)
 
-	// 记录起始玩家
 	mg.mu.RLock()
-	startUserID = mg.PlayerOrder[mg.CurrentPos]
+	firstActorID = mg.PlayerOrder[mg.CurrentPos]
 	mg.mu.RUnlock()
 
 	for {
@@ -445,61 +453,37 @@ func (mg *MultiplayerGame) runBettingRound(phase string) {
 
 		// 检查轮次结束条件
 		mg.mu.RLock()
-		roundComplete := false
+		shouldEnd := false
 
-		if lastRaiseUserID != -1 {
-			// 有加注的情况：
-			// 1. 所有未弃牌玩家都跟注到了相同金额
-			// 2. 已经回到了加注者
-			allCalled := true
+		if lastRaiserID != -1 {
+			// 有人加注的情况
+			// 条件：所有未弃牌玩家都跟注到了相同金额，且轮到了加注者
+			allMatched := true
 			for _, uid := range mg.PlayerOrder {
 				p := mg.Players[uid]
 				if p.Folded {
 					continue
 				}
-				if p.Bet != mg.CurrentBet && !p.AllIn {
-					allCalled = false
+				// 未弃牌且未全下的玩家必须跟注到当前下注额
+				if !p.AllIn && p.Bet != mg.CurrentBet {
+					allMatched = false
 					break
 				}
 			}
-
-			if allCalled && playersHaveActed[currentUserID] && currentUserID == lastRaiseUserID {
-				roundComplete = true
+			// 加注者已经行动过，且所有人都跟注了
+			if allMatched && actionedPlayers[lastRaiserID] && currentUserID == lastRaiserID {
+				shouldEnd = true
 			}
 		} else {
-			// 没有加注的情况：
-			// 1. 所有未弃牌玩家都过牌了
-			// 2. 绕了一圈回到了起始玩家
-			allChecked := true
-			for _, uid := range mg.PlayerOrder {
-				p := mg.Players[uid]
-				if p.Folded || p.AllIn {
-					continue
-				}
-				if p.Bet > 0 {
-					allChecked = false
-					break
-				}
-			}
-			_ = allChecked // 避免未使用变量警告
-			for _, uid := range mg.PlayerOrder {
-				p := mg.Players[uid]
-				if p.Folded || p.AllIn {
-					continue
-				}
-				if p.Bet > 0 {
-					allChecked = false
-					break
-				}
-			}
-
-			if playersHaveActed[currentUserID] && currentUserID == startUserID {
-				roundComplete = true
+			// 无人加注的情况
+			// 条件：所有人都过牌（或弃牌/全下），且绕了一圈回到第一个行动者
+			if actionedPlayers[currentUserID] && currentUserID == firstActorID {
+				shouldEnd = true
 			}
 		}
 		mg.mu.RUnlock()
 
-		if roundComplete {
+		if shouldEnd {
 			fmt.Printf("runBettingRound: 轮次结束\n")
 			break
 		}
@@ -522,8 +506,8 @@ func (mg *MultiplayerGame) runBettingRound(phase string) {
 		action, amount := mg.waitForAction(currentUserID, 60)
 		fmt.Printf("runBettingRound: 收到操作 action=%s, amount=%d\n", action, amount)
 
-		// 标记该玩家已操作
-		playersHaveActed[currentUserID] = true
+		// 标记该玩家已行动
+		actionedPlayers[currentUserID] = true
 
 		// 执行操作
 		mg.executeAction(currentUserID, action, amount)
@@ -553,9 +537,10 @@ func (mg *MultiplayerGame) runBettingRound(phase string) {
 		// 更新最后加注位置
 		if action == "raise" || action == "allin" {
 			mg.mu.RLock()
-			lastRaiseUserID = currentUserID
-			// 加注后，重置已操作标记，所有玩家需要重新响应
-			playersHaveActed = make(map[int]bool)
+			lastRaiserID = currentUserID
+			// 加注后，重置已行动标记（加注者自己已经行动了）
+			actionedPlayers = make(map[int]bool)
+			actionedPlayers[currentUserID] = true
 			mg.mu.RUnlock()
 		}
 
