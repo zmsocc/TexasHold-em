@@ -11,34 +11,34 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
-	"github.com/patrickmn/go-cache"
 )
 
 // JWT 配置
 const (
-	AccessTokenExpiry  = 15 * time.Minute   // Access Token 有效期
-	RefreshTokenExpiry = 7 * 24 * time.Hour // Refresh Token 有效期
+	AccessTokenExpiry           = 15 * time.Minute    // Access Token 有效期
+	RefreshTokenExpiry          = 7 * 24 * time.Hour  // Refresh Token 有效期
+	AccessTokenRefreshThreshold = 5 * time.Minute     // Access Token 即将过期阈值（用于无感刷新）
 )
 
 var (
-	jwtSecret        = []byte("your-secret-key-change-this-in-production")
-	refreshTokenCache = cache.New(RefreshTokenExpiry, 10*time.Minute)
-	blacklistCache    = cache.New(RefreshTokenExpiry, 10*time.Minute)
+	jwtSecret = []byte("your-secret-key-change-this-in-production")
 )
 
 // TokenClaims JWT 声明
 type TokenClaims struct {
-	UserID   int    `json:"user_id"`
-	Nickname string `json:"nickname"`
+	UserID    int    `json:"user_id"`
+	Nickname  string `json:"nickname"`
 	TokenType string `json:"token_type"`
 	jwt.RegisteredClaims
 }
 
 // TokenPair 双Token结构
 type TokenPair struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int64  `json:"expires_in"`
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token"`
+	ExpiresIn    int64     `json:"expires_in"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	TokenType    string    `json:"token_type"`
 }
 
 // ==================== 密码加密 ====================
@@ -67,6 +67,9 @@ func GenerateTokenPair(userID int, nickname string) (*TokenPair, error) {
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(AccessTokenExpiry)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			NotBefore: jwt.NewNumericDate(time.Now()),
+			Issuer:    "texas-holdem",
+			Subject:   fmt.Sprintf("%d", userID),
 		},
 	}
 	accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims)
@@ -82,13 +85,19 @@ func GenerateTokenPair(userID int, nickname string) (*TokenPair, error) {
 	}
 	refreshTokenString := base64.URLEncoding.EncodeToString(refreshTokenBytes)
 
-	// 存储 Refresh Token 到缓存
-	refreshTokenCache.Set(refreshTokenString, userID, RefreshTokenExpiry)
+	// 存储 Refresh Token 到数据库
+	refreshExpiresAt := time.Now().Add(RefreshTokenExpiry)
+	err = SaveRefreshToken(userID, refreshTokenString, refreshExpiresAt)
+	if err != nil {
+		return nil, fmt.Errorf("保存Refresh Token失败: %v", err)
+	}
 
 	return &TokenPair{
 		AccessToken:  accessTokenString,
 		RefreshToken: refreshTokenString,
 		ExpiresIn:    int64(AccessTokenExpiry.Seconds()),
+		ExpiresAt:    time.Now().Add(AccessTokenExpiry),
+		TokenType:    "Bearer",
 	}, nil
 }
 
@@ -117,23 +126,28 @@ func ParseAccessToken(tokenString string) (*TokenClaims, error) {
 
 // ValidateRefreshToken 验证 Refresh Token
 func ValidateRefreshToken(refreshToken string) (int, bool) {
-	// 检查是否在黑名单中
-	if _, found := blacklistCache.Get(refreshToken); found {
+	// 从数据库验证
+	userID, expiresAt, isRevoked, err := GetRefreshToken(refreshToken)
+	if err != nil {
 		return 0, false
 	}
 
-	// 检查是否存在
-	if userID, found := refreshTokenCache.Get(refreshToken); found {
-		return userID.(int), true
+	// 检查是否已撤销
+	if isRevoked {
+		return 0, false
 	}
 
-	return 0, false
+	// 检查是否过期
+	if time.Now().After(expiresAt) {
+		return 0, false
+	}
+
+	return userID, true
 }
 
-// BlacklistRefreshToken 将 Refresh Token 加入黑名单
+// BlacklistRefreshToken 将 Refresh Token 加入黑名单（撤销）
 func BlacklistRefreshToken(refreshToken string) {
-	blacklistCache.Set(refreshToken, true, RefreshTokenExpiry)
-	refreshTokenCache.Delete(refreshToken)
+	RevokeRefreshToken(refreshToken)
 }
 
 // RefreshAccessToken 使用 Refresh Token 刷新 Access Token
@@ -149,11 +163,36 @@ func RefreshAccessToken(refreshToken string) (*TokenPair, error) {
 		return nil, fmt.Errorf("user not found")
 	}
 
-	// 使旧的 Refresh Token 失效
+	// 使旧的 Refresh Token 失效（一次性使用）
 	BlacklistRefreshToken(refreshToken)
 
 	// 生成新的 Token Pair
 	return GenerateTokenPair(userID, user.Nickname)
+}
+
+// ShouldRefreshToken 检查是否需要刷新Access Token
+// 返回true表示Token即将过期，需要刷新
+func ShouldRefreshToken(tokenString string) (bool, *TokenClaims, error) {
+	claims, err := ParseAccessToken(tokenString)
+	if err != nil {
+		return false, nil, err
+	}
+
+	// 检查Token是否即将过期（剩余时间小于阈值）
+	timeUntilExpiry := time.Until(claims.ExpiresAt.Time)
+	shouldRefresh := timeUntilExpiry < AccessTokenRefreshThreshold
+
+	return shouldRefresh, claims, nil
+}
+
+// RevokeUserTokens 撤销用户的所有Token（登出时使用）
+func RevokeUserTokens(userID int) error {
+	return RevokeAllUserRefreshTokens(userID)
+}
+
+// CleanupExpiredTokens 清理过期的Token（可以定时任务调用）
+func CleanupExpiredTokens() error {
+	return CleanExpiredRefreshTokens()
 }
 
 // ==================== 限流器 ====================
@@ -293,8 +332,8 @@ func (sl *SuccessLimiter) RecordSuccess(key string) {
 
 // 全局限流器实例
 var (
-	loginLimiter    = NewRateLimiter(3, 1*time.Minute)      // 登录：每IP每分钟3次
-	registerLimiter = NewSuccessLimiter(3, 1*time.Minute)   // 注册：每IP每分钟3次（仅成功时计数）
+	loginLimiter    = NewRateLimiter(3, 1*time.Minute)    // 登录：每IP每分钟3次
+	registerLimiter = NewSuccessLimiter(3, 1*time.Minute) // 注册：每IP每分钟3次（仅成功时计数）
 )
 
 // ==================== HTTP 中间件 ====================

@@ -108,6 +108,27 @@ func createTables() error {
 		return err
 	}
 
+	// 创建Refresh Token表
+	createRefreshTokensTable := `
+	CREATE TABLE IF NOT EXISTS refresh_tokens (
+		id INT AUTO_INCREMENT PRIMARY KEY,
+		user_id INT NOT NULL,
+		token VARCHAR(255) NOT NULL UNIQUE,
+		expires_at TIMESTAMP NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		is_revoked BOOLEAN DEFAULT FALSE,
+		INDEX idx_token (token),
+		INDEX idx_user_id (user_id),
+		INDEX idx_expires_at (expires_at),
+		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+	`
+
+	_, err = db.Exec(createRefreshTokensTable)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -210,6 +231,52 @@ func CheckEmailExists(email string) (bool, error) {
 	}
 
 	return count > 0, nil
+}
+
+// ==================== Refresh Token 数据库操作 ====================
+
+// SaveRefreshToken 保存Refresh Token到数据库
+func SaveRefreshToken(userID int, token string, expiresAt time.Time) error {
+	_, err := db.Exec(
+		"INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES (?, ?, ?)",
+		userID, token, expiresAt,
+	)
+	return err
+}
+
+// GetRefreshToken 从数据库获取Refresh Token
+func GetRefreshToken(token string) (userID int, expiresAt time.Time, isRevoked bool, err error) {
+	err = db.QueryRow(
+		"SELECT user_id, expires_at, is_revoked FROM refresh_tokens WHERE token = ?",
+		token,
+	).Scan(&userID, &expiresAt, &isRevoked)
+	return
+}
+
+// RevokeRefreshToken 撤销Refresh Token
+func RevokeRefreshToken(token string) error {
+	_, err := db.Exec(
+		"UPDATE refresh_tokens SET is_revoked = TRUE WHERE token = ?",
+		token,
+	)
+	return err
+}
+
+// RevokeAllUserRefreshTokens 撤销用户的所有Refresh Token
+func RevokeAllUserRefreshTokens(userID int) error {
+	_, err := db.Exec(
+		"UPDATE refresh_tokens SET is_revoked = TRUE WHERE user_id = ?",
+		userID,
+	)
+	return err
+}
+
+// CleanExpiredRefreshTokens 清理过期的Refresh Token
+func CleanExpiredRefreshTokens() error {
+	_, err := db.Exec(
+		"DELETE FROM refresh_tokens WHERE expires_at < NOW() OR is_revoked = TRUE",
+	)
+	return err
 }
 
 // ==================== 房间数据库操作 ====================

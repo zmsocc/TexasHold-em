@@ -152,6 +152,7 @@ func (g *WebGUIGame) Run() {
 
 	// 静态资源
 	http.Handle("/puke-img/", http.StripPrefix("/puke-img/", http.FileServer(http.Dir("puke-img"))))
+	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 	http.HandleFunc("/bm.png", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "bm.png")
 	})
@@ -168,7 +169,7 @@ func (g *WebGUIGame) Run() {
 	http.ListenAndServe("192.168.0.31:8080", nil)
 }
 
-// authMiddleware JWT认证中间件
+// authMiddleware JWT认证中间件（支持无感刷新）
 func (g *WebGUIGame) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// 从Cookie或Header获取token
@@ -187,8 +188,14 @@ func (g *WebGUIGame) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			}
 		}
 
+		// 如果没有token，尝试用refresh token刷新
 		if tokenString == "" {
-			// 如果是API请求，返回401
+			if g.tryRefreshToken(w, r) {
+				// 刷新成功，重新执行请求
+				next(w, r)
+				return
+			}
+			// 刷新失败，需要登录
 			if (len(r.URL.Path) >= 4 && r.URL.Path[:4] == "/api") || r.URL.Path == "/state" || r.URL.Path == "/action" {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
@@ -198,14 +205,19 @@ func (g *WebGUIGame) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 				})
 				return
 			}
-			// 页面请求重定向到登录页
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
 
 		claims, err := ParseAccessToken(tokenString)
 		if err != nil {
-			// Token无效或过期
+			// Access Token无效或过期，尝试用refresh token刷新
+			if g.tryRefreshToken(w, r) {
+				// 刷新成功，重新执行请求
+				next(w, r)
+				return
+			}
+			// 刷新失败
 			if (len(r.URL.Path) >= 4 && r.URL.Path[:4] == "/api") || r.URL.Path == "/state" || r.URL.Path == "/action" {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
@@ -217,6 +229,13 @@ func (g *WebGUIGame) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			}
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
+		}
+
+		// Token有效，检查是否需要预刷新（即将过期）
+		shouldRefresh, _, err := ShouldRefreshToken(tokenString)
+		if err == nil && shouldRefresh {
+			// Token即将过期，在后台静默刷新
+			go g.tryRefreshToken(nil, r)
 		}
 
 		// 获取用户信息
@@ -242,6 +261,46 @@ func (g *WebGUIGame) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 		next(w, r)
 	}
+}
+
+// tryRefreshToken 尝试使用Refresh Token刷新Access Token
+// 如果w为nil，则只刷新不设置cookie（后台静默刷新）
+func (g *WebGUIGame) tryRefreshToken(w http.ResponseWriter, r *http.Request) bool {
+	// 获取refresh token
+	var refreshToken string
+	if cookie, err := r.Cookie("refresh_token"); err == nil {
+		refreshToken = cookie.Value
+	}
+
+	if refreshToken == "" {
+		return false
+	}
+
+	// 刷新token
+	tokenPair, err := RefreshAccessToken(refreshToken)
+	if err != nil {
+		return false
+	}
+
+	// 如果w不为nil，设置新Cookie
+	if w != nil {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "access_token",
+			Value:    tokenPair.AccessToken,
+			Path:     "/",
+			HttpOnly: true,
+			MaxAge:   int(AccessTokenExpiry.Seconds()),
+		})
+		http.SetCookie(w, &http.Cookie{
+			Name:     "refresh_token",
+			Value:    tokenPair.RefreshToken,
+			Path:     "/",
+			HttpOnly: true,
+			MaxAge:   int(RefreshTokenExpiry.Seconds()),
+		})
+	}
+
+	return true
 }
 
 // rateLimitMiddleware 限流中间件
