@@ -406,6 +406,7 @@
         let minRaise = 20;
         let maxRaise = 0;
         let showdownData = null;
+        let hasOtherAllin = false;
 
         function getUrlParam(param) {
             const urlParams = new URLSearchParams(window.location.search);
@@ -471,6 +472,8 @@
 
                 case 'hand_started':
                     showMessage('游戏开始！');
+                    // 重置其他玩家全下状态
+                    hasOtherAllin = false;
                     break;
 
                 case 'hole_cards':
@@ -483,6 +486,8 @@
                     break;
 
                 case 'player_turn':
+                    // 保存是否有其他玩家全下的状态
+                    hasOtherAllin = msg.data.has_other_allin || false;
                     if (msg.data.user_id === currentUserId) {
                         isMyTurn = true;
                         startTimer(msg.data.time_left || 60);
@@ -715,21 +720,30 @@
 
             let html = '';
             
-            html += '<button class="btn btn-fold" onclick="doAction(\'fold\')">弃牌</button>';
-            
-            if (canCheck) {
-                html += '<button class="btn btn-check" onclick="doAction(\'check\')">过牌</button>';
+            // 如果有其他玩家全下了，只显示弃牌、跟注、全下按钮
+            if (hasOtherAllin) {
+                html += '<button class="btn btn-fold" onclick="doAction(\'fold\')">弃牌</button>';
+                if (canCall) {
+                    html += `<button class="btn btn-call" onclick="doAction('call')">跟注 (${callAmount})</button>`;
+                }
+                html += '<button class="btn btn-allin" onclick="doAction(\'allin\')">全下</button>';
+            } else {
+                html += '<button class="btn btn-fold" onclick="doAction(\'fold\')">弃牌</button>';
+                
+                if (canCheck) {
+                    html += '<button class="btn btn-check" onclick="doAction(\'check\')">过牌</button>';
+                }
+                
+                if (canCall) {
+                    html += `<button class="btn btn-call" onclick="doAction('call')">跟注 (${callAmount})</button>`;
+                }
+                
+                if (canRaise) {
+                    html += '<button class="btn btn-raise" onclick="showRaiseModal()">加注</button>';
+                }
+                
+                html += '<button class="btn btn-allin" onclick="doAction(\'allin\')">全下</button>';
             }
-            
-            if (canCall) {
-                html += `<button class="btn btn-call" onclick="doAction('call')">跟注 (${callAmount})</button>`;
-            }
-            
-            if (canRaise) {
-                html += '<button class="btn btn-raise" onclick="showRaiseModal()">加注</button>';
-            }
-            
-            html += '<button class="btn btn-allin" onclick="doAction(\'allin\')">全下</button>';
             
             controls.innerHTML = html;
         }

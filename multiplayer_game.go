@@ -219,22 +219,27 @@ func (mg *MultiplayerGame) run() {
 
 	// 游戏主循环
 	for mg.Status != "finished" {
-		if mg.isGameOver() {
-			fmt.Printf("run: 游戏结束，只剩一个玩家，直接进入摊牌\n")
-			mg.Status = "showdown"
+		// 检查是否只剩一个未弃牌玩家（其他人都弃牌了）
+		if mg.getUnfoldedPlayerCount() == 1 {
+			fmt.Printf("run: 只剩一个未弃牌玩家，直接宣布获胜\n")
+			mg.awardToLastUnfoldedPlayer()
+			mg.Status = "finished"
+			break
+		}
+
+		// 检查是否所有未弃牌玩家都全下
+		if mg.allActivePlayersAllIn() {
+			fmt.Printf("run: 所有未弃牌玩家都全下，发完剩余公共牌并摊牌\n")
+			mg.dealRemainingCommunityCards()
+			mg.runShowdown()
+			mg.Status = "finished"
+			break
 		}
 
 		switch mg.Status {
 		case "preflop":
 			mg.runBettingRound("preflop")
 			if mg.isGameOver() {
-				break
-			}
-			// 检查是否所有未弃牌玩家都全下
-			if mg.allActivePlayersAllIn() {
-				fmt.Printf("run: 所有活跃玩家都全下，跳过后续下注轮，直接发完公共牌\n")
-				mg.dealRemainingCommunityCards()
-				mg.Status = "showdown"
 				break
 			}
 			mg.dealFlop()
@@ -246,13 +251,6 @@ func (mg *MultiplayerGame) run() {
 			if mg.isGameOver() {
 				break
 			}
-			// 检查是否所有未弃牌玩家都全下
-			if mg.allActivePlayersAllIn() {
-				fmt.Printf("run: 所有活跃玩家都全下，跳过后续下注轮，直接发完公共牌\n")
-				mg.dealRemainingCommunityCards()
-				mg.Status = "showdown"
-				break
-			}
 			mg.dealTurn()
 			// 转牌后：从小盲开始
 			mg.CurrentPos = mg.getNextActivePosition(mg.DealerPos, 1)
@@ -260,13 +258,6 @@ func (mg *MultiplayerGame) run() {
 		case "turn":
 			mg.runBettingRound("turn")
 			if mg.isGameOver() {
-				break
-			}
-			// 检查是否所有未弃牌玩家都全下
-			if mg.allActivePlayersAllIn() {
-				fmt.Printf("run: 所有活跃玩家都全下，跳过后续下注轮，直接发完公共牌\n")
-				mg.dealRemainingCommunityCards()
-				mg.Status = "showdown"
 				break
 			}
 			mg.dealRiver()
@@ -515,16 +506,23 @@ func (mg *MultiplayerGame) runBettingRound(phase string) {
 			break
 		}
 
+		// 检查是否有其他玩家已经全下（用于限制当前玩家的操作选项）
+		hasOtherAllIn := mg.hasOtherPlayerAllIn(currentUserID)
+		if hasOtherAllIn {
+			fmt.Printf("runBettingRound: 有其他玩家已全下，当前玩家 %d 只能选择弃牌/跟注/全下\n", currentUserID)
+		}
+
 		fmt.Printf("runBettingRound: 广播 player_turn 给 user_id=%d\n", currentUserID)
 
 		// 广播轮到该玩家
 		mg.broadcast(GameEvent{
 			Type: "player_turn",
 			Data: map[string]interface{}{
-				"user_id":   currentUserID,
-				"nickname":  player.Nickname,
-				"time_left": 60,
-				"phase":     phase,
+				"user_id":         currentUserID,
+				"nickname":        player.Nickname,
+				"time_left":       60,
+				"phase":           phase,
+				"has_other_allin": hasOtherAllIn,
 			},
 		})
 
@@ -839,104 +837,110 @@ func (mg *MultiplayerGame) runShowdown() {
 		return
 	}
 
-	if len(activePlayers) == 1 {
-		// 只有一个玩家，直接获胜
-		winner := activePlayers[0]
-		winner.Chips += mg.Pot
+	// 计算边池
+	sidePots := mg.calculateSidePots()
 
-		// 获取胜者最佳5张牌
-		winnerUserID := winner.UserID
-		holeCards := mg.HoleCards[winnerUserID]
-		allCards := append(holeCards, mg.CommunityCards...)
-		winnerHand := EvaluateHand(allCards)
-		winnerBestCards := winnerHand.Cards
+	// 为每个玩家计算他们的手牌
+	playerHands := make(map[int]Hand)
+	for _, ph := range hands {
+		playerHands[ph.userID] = ph.hand
+	}
 
-		// 对最佳5张牌进行排序
-		sortedWinnerCards := make([]Card, len(winnerBestCards))
-		copy(sortedWinnerCards, winnerBestCards)
-		// 定义面值排序：A > K > Q > J > 10 > 9 > 8 > 7 > 6 > 5 > 4 > 3 > 2
-		rankOrder := map[Rank]int{
-			Ace:   14,
-			King:  13,
-			Queen: 12,
-			Jack:  11,
-			Ten:   10,
-			Nine:  9,
-			Eight: 8,
-			Seven: 7,
-			Six:   6,
-			Five:  5,
-			Four:  4,
-			Three: 3,
-			Two:   2,
+	// 分配每个边池
+	winnersMap := make(map[int]int) // userID -> 赢得的总金额
+	var sidePotResults []map[string]interface{}
+
+	for _, sidePot := range sidePots {
+		// 找出参与该边池的玩家中牌型最好的
+		var bestSideHand Hand
+		var sideWinners []int
+		first := true
+
+		for _, userID := range sidePot.PlayerIDs {
+			hand, ok := playerHands[userID]
+			if !ok {
+				continue
+			}
+			if first {
+				bestSideHand = hand
+				sideWinners = []int{userID}
+				first = false
+			} else {
+				cmp := CompareHands(hand, bestSideHand)
+				if cmp > 0 {
+					bestSideHand = hand
+					sideWinners = []int{userID}
+				} else if cmp == 0 {
+					sideWinners = append(sideWinners, userID)
+				}
+			}
 		}
-		sort.Slice(sortedWinnerCards, func(i, j int) bool {
-			return rankOrder[sortedWinnerCards[i].Rank] > rankOrder[sortedWinnerCards[j].Rank]
+
+		// 分配该边池给胜者
+		if len(sideWinners) > 0 {
+			winAmount := sidePot.Amount / len(sideWinners)
+			remainder := sidePot.Amount % len(sideWinners)
+			for i, userID := range sideWinners {
+				amount := winAmount
+				if i < remainder {
+					amount++
+				}
+				mg.Players[userID].Chips += amount
+				winnersMap[userID] += amount
+			}
+		}
+
+		// 记录边池结果
+		sidePotResults = append(sidePotResults, map[string]interface{}{
+			"amount":    sidePot.Amount,
+			"winners":   sideWinners,
+			"hand_rank": getHandRankName(bestSideHand.Rank),
 		})
-
-		showdownCards := make([]string, len(sortedWinnerCards))
-		for i, card := range sortedWinnerCards {
-			showdownCards[i] = card.ImageFileName()
-		}
-
-		mg.broadcast(GameEvent{
-			Type: "showdown_result",
-			Data: map[string]interface{}{
-				"winners":          []int{winner.UserID},
-				"pot":              mg.Pot,
-				"hands":            mg.getPlayerHands(),
-				"showdown_cards":   showdownCards,
-				"winner_name":      winner.Nickname,
-				"winner_hand_rank": getHandRankName(winnerHand.Rank),
-			},
-		})
-		return
 	}
 
-	// 比较牌型找出获胜者
-	bestHand := hands[0].hand
-	winners := []int{hands[0].userID}
-	winnerBestCards := hands[0].bestCards
-
-	for i := 1; i < len(hands); i++ {
-		ph := hands[i]
-		cmp := CompareHands(ph.hand, bestHand)
-		if cmp > 0 {
-			bestHand = ph.hand
-			winners = []int{ph.userID}
-			winnerBestCards = ph.bestCards
-		} else if cmp == 0 {
-			winners = append(winners, ph.userID)
+	// 找出总赢得最多的玩家作为主胜者
+	var mainWinnerID int
+	var maxWinAmount int
+	for userID, amount := range winnersMap {
+		if amount > maxWinAmount {
+			maxWinAmount = amount
+			mainWinnerID = userID
 		}
 	}
 
-	// 分配底池
-	winAmount := mg.Pot / len(winners)
-	remainder := mg.Pot % len(winners)
-	eachWinAmount := make([]int, len(winners))
-
-	for i, userID := range winners {
-		amount := winAmount
-		if i < remainder {
-			amount++
+	// 收集所有胜者
+	var allWinners []int
+	for userID := range winnersMap {
+		if winnersMap[userID] > 0 {
+			allWinners = append(allWinners, userID)
 		}
-		mg.Players[userID].Chips += amount
-		eachWinAmount[i] = amount
 	}
 
-	// 获取第一个胜者的昵称
+	// 获取主胜者的信息
 	var winnerName string
-	if len(winners) > 0 {
-		winnerName = mg.Players[winners[0]].Nickname
+	var winnerHandRank string
+	var winnerBestCards []Card
+	if mainWinnerID > 0 {
+		winner := mg.Players[mainWinnerID]
+		winnerName = winner.Nickname
+		if hand, ok := playerHands[mainWinnerID]; ok {
+			winnerHandRank = getHandRankName(hand.Rank)
+			winnerBestCards = hand.Cards
+		}
 	}
 
-	// 获取赢得的筹码数量（取第一个胜者的数量）
-	totalWinAmount := 0
-	if len(eachWinAmount) > 0 {
-		totalWinAmount = eachWinAmount[0]
+	// 对最佳5张牌进行排序
+	if len(winnerBestCards) > 0 {
+		rankOrder := map[Rank]int{
+			Ace: 14, King: 13, Queen: 12, Jack: 11, Ten: 10,
+			Nine: 9, Eight: 8, Seven: 7, Six: 6, Five: 5,
+			Four: 4, Three: 3, Two: 2,
+		}
+		sort.Slice(winnerBestCards, func(i, j int) bool {
+			return rankOrder[winnerBestCards[i].Rank] > rankOrder[winnerBestCards[j].Rank]
+		})
 	}
 
-	// 准备展示胜者最佳5张牌
 	showdownCards := make([]string, len(winnerBestCards))
 	for i, card := range winnerBestCards {
 		showdownCards[i] = card.ImageFileName()
@@ -946,14 +950,16 @@ func (mg *MultiplayerGame) runShowdown() {
 	mg.broadcast(GameEvent{
 		Type: "showdown_result",
 		Data: map[string]interface{}{
-			"winners":          winners,
+			"winners":          allWinners,
 			"pot":              mg.Pot,
 			"hands":            mg.getPlayerHands(),
-			"best_rank":        getHandRankName(bestHand.Rank),
+			"best_rank":        winnerHandRank,
 			"showdown_cards":   showdownCards,
 			"winner_name":      winnerName,
-			"winner_hand_rank": getHandRankName(bestHand.Rank),
-			"win_amount":       totalWinAmount,
+			"winner_hand_rank": winnerHandRank,
+			"win_amount":       maxWinAmount,
+			"side_pots":        sidePotResults,
+			"winners_map":      winnersMap,
 		},
 	})
 }
@@ -1003,11 +1009,107 @@ func (mg *MultiplayerGame) isGameOver() bool {
 	return mg.getActivePlayerCount() <= 1
 }
 
+// getUnfoldedPlayerCount 获取未弃牌玩家数量
+func (mg *MultiplayerGame) getUnfoldedPlayerCount() int {
+	mg.mu.RLock()
+	defer mg.mu.RUnlock()
+
+	count := 0
+	for _, player := range mg.Players {
+		if !player.Folded {
+			count++
+		}
+	}
+	return count
+}
+
 func (mg *MultiplayerGame) resetBets() {
 	mg.CurrentBet = 0
 	for _, player := range mg.Players {
 		player.Bet = 0
 	}
+}
+
+// awardToLastUnfoldedPlayer 将底池奖励给最后一个未弃牌的玩家
+func (mg *MultiplayerGame) awardToLastUnfoldedPlayer() {
+	mg.mu.Lock()
+	defer mg.mu.Unlock()
+
+	var winner *MultiplayerPlayer
+	var winnerID int
+	for uid, player := range mg.Players {
+		if !player.Folded {
+			winner = player
+			winnerID = uid
+			break
+		}
+	}
+
+	if winner == nil {
+		return
+	}
+
+	// 奖励底池给胜者
+	winner.Chips += mg.Pot
+
+	// 广播结果
+	mg.broadcast(GameEvent{
+		Type: "showdown_result",
+		Data: map[string]interface{}{
+			"winners":         []int{winnerID},
+			"pot":             mg.Pot,
+			"winner_name":     winner.Nickname,
+			"win_amount":      mg.Pot,
+			"all_others_fold": true,
+		},
+	})
+}
+
+// SidePot 边池结构
+type SidePot struct {
+	Amount    int
+	PlayerIDs []int
+}
+
+// calculateSidePots 计算主池和边池（调用者必须持有锁）
+func (mg *MultiplayerGame) calculateSidePots() []SidePot {
+	// 收集所有未弃牌玩家及其下注额
+	type playerBet struct {
+		userID int
+		bet    int
+	}
+	var playerBets []playerBet
+	for uid, player := range mg.Players {
+		if !player.Folded {
+			playerBets = append(playerBets, playerBet{uid, player.Bet})
+		}
+	}
+
+	// 按下注额从小到大排序
+	sort.Slice(playerBets, func(i, j int) bool {
+		return playerBets[i].bet < playerBets[j].bet
+	})
+
+	var sidePots []SidePot
+	prevBet := 0
+
+	for i, pb := range playerBets {
+		if pb.bet > prevBet {
+			// 创建新的边池
+			potAmount := (pb.bet - prevBet) * (len(playerBets) - i)
+			var potPlayers []int
+			for j := i; j < len(playerBets); j++ {
+				potPlayers = append(potPlayers, playerBets[j].userID)
+			}
+			sidePots = append(sidePots, SidePot{
+				Amount:    potAmount,
+				PlayerIDs: potPlayers,
+			})
+			prevBet = pb.bet
+		}
+	}
+
+	return sidePots
 }
 
 // allActivePlayersAllIn 检查所有未弃牌玩家是否都全下
@@ -1030,6 +1132,26 @@ func (mg *MultiplayerGame) allActivePlayersAllIn() bool {
 
 	// 至少有一个活跃玩家，且所有活跃玩家都全下
 	return activePlayerCount >= 1 && allInCount == activePlayerCount
+}
+
+// hasOtherPlayerAllIn 检查是否有其他未弃牌玩家已经全下
+func (mg *MultiplayerGame) hasOtherPlayerAllIn(userID int) bool {
+	mg.mu.RLock()
+	defer mg.mu.RUnlock()
+
+	for uid, player := range mg.Players {
+		if uid == userID {
+			continue
+		}
+		if player.Folded {
+			continue
+		}
+		// 有其他未弃牌玩家已经全下
+		if player.AllIn {
+			return true
+		}
+	}
+	return false
 }
 
 // dealRemainingCommunityCards 发完剩余的所有公共牌
