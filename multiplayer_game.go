@@ -895,10 +895,11 @@ func (mg *MultiplayerGame) runShowdown() {
 
 	// 比较牌型找出获胜者
 	bestHand := hands[0].hand
-	var winners []int
-	var winnerBestCards []Card
+	winners := []int{hands[0].userID}
+	winnerBestCards := hands[0].bestCards
 
-	for _, ph := range hands {
+	for i := 1; i < len(hands); i++ {
+		ph := hands[i]
 		cmp := CompareHands(ph.hand, bestHand)
 		if cmp > 0 {
 			bestHand = ph.hand
