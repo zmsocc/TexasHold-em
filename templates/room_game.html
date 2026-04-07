@@ -277,6 +277,27 @@
             color: #ffd700;
             font-weight: bold;
         }
+        .table-modal {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.7);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            border-radius: 200px;
+        }
+        .table-modal-content {
+            background: #1e3a5f;
+            padding: 30px;
+            border-radius: 15px;
+            text-align: center;
+            border: 2px solid #ffd700;
+            max-width: 350px;
+        }
         .connection-status {
             position: fixed;
             top: 20px;
@@ -302,8 +323,9 @@
             bottom: 0;
             background: rgba(0,0,0,0.5);
             display: none;
-            align-items: center;
+            align-items: flex-start;
             justify-content: center;
+            padding-top: 770px;
             z-index: 1000;
         }
         .modal-content {
@@ -335,6 +357,9 @@
             <div class="pot" id="pot" style="display: none;">底池: 0</div>
             <div class="community" id="community" style="display: none;"></div>
             <div class="message" id="message" style="display: none;"></div>
+            <div class="table-modal" id="tableModal" style="display: none;">
+                <div class="table-modal-content" id="tableModalContent"></div>
+            </div>
         </div>
         
         <div class="players-bottom" id="playersBottom"></div>
@@ -908,9 +933,23 @@
                 }
                 const handRank = showdownData.winner_hand_rank || showdownData.best_rank || '';
                 const winAmount = showdownData.win_amount || showdownData.pot || 0;
+
+                let winnerCardsHtml = '';
+                if (showdownData.showdown_cards && showdownData.showdown_cards.length > 0) {
+                    winnerCardsHtml = `
+                        <div style="margin: 15px 0;">
+                            <div style="margin-bottom: 8px; color: #aaa;">胜者的牌：</div>
+                            <div style="display: flex; justify-content: center; gap: 8px;">
+                                ${showdownData.showdown_cards.map(card => `<img src="/${card}" style="width: 50px; height: 70px; border-radius: 5px; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">`).join('')}
+                            </div>
+                        </div>
+                    `;
+                }
+
                 messageEl.innerHTML = `
                     <div style="margin-bottom: 10px;">胜者：<span style="color: #ffd700; font-weight: bold;">${winnerNames}</span></div>
                     <div style="margin-bottom: 10px;">牌型：<span style="color: #ffd700; font-weight: bold;">${handRank}</span></div>
+                    ${winnerCardsHtml}
                     <div>本局赢得：<span style="color: #28a745; font-weight: bold;">${winAmount}</span> 筹码</div>
                 `;
             } else {

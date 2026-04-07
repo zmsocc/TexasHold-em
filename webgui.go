@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"log"
 	"math/rand"
 	"net/http"
 	"sync"
@@ -160,13 +161,16 @@ func (g *WebGUIGame) Run() {
 		http.ServeFile(w, r, "zhuomian.png")
 	})
 
+	port := "8080"
 	fmt.Println("=====================================")
 	fmt.Println("   德州扑克 Web GUI 已启动！")
 	fmt.Println("=====================================")
-	fmt.Println("请在浏览器中打开: http://192.168.0.31:8080")
+	fmt.Printf("请在浏览器中打开: http://192.168.0.31:%s\n", port)
 	fmt.Println("=====================================")
 
-	http.ListenAndServe("192.168.0.31:8080", nil)
+	if err := http.ListenAndServe("192.168.0.31:"+port, nil); err != nil {
+		log.Fatalf("Server failed to start: %v", err)
+	}
 }
 
 // authMiddleware JWT认证中间件（支持无感刷新）
