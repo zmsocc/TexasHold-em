@@ -2,6 +2,7 @@
 <html>
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>房间游戏 - 德州扑克</title>
     <style>
         * {
@@ -313,16 +314,6 @@
             max-width: 400px;
             border: 2px solid #ffd700;
         }
-        .winner {
-            font-size: 24px;
-            color: #ffd700;
-            margin-bottom: 20px;
-        }
-        h1 {
-            text-align: center;
-            margin: 20px 0;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
-        }
     </style>
 </head>
 <body>
@@ -370,6 +361,7 @@
     <div class="modal" id="gameOverModal">
         <div class="modal-content">
             <h2 style="color: #ffd700; margin-bottom: 20px;">游戏结束</h2>
+            <div id="gameOverMessage" style="font-size: 18px; margin-bottom: 25px; line-height: 1.6;"></div>
             <div style="display: flex; gap: 15px; justify-content: center;">
                 <button class="btn btn-check" onclick="goHome()">返回首页</button>
                 <button class="btn btn-call" onclick="goBackToRoom()">返回房间</button>
@@ -387,6 +379,7 @@
         let currentUserId = null;
         let minRaise = 20;
         let maxRaise = 0;
+        let showdownData = null;
 
         function getUrlParam(param) {
             const urlParams = new URLSearchParams(window.location.search);
@@ -475,7 +468,11 @@
                     }
                     if (gameState && gameState.players) {
                         gameState.current_player = msg.data.user_id;
-                        updatePlayers(gameState.players, msg.data.user_id);
+                        const allPlayers = gameState.players;
+                        const topPlayers = allPlayers.slice(0, Math.ceil(allPlayers.length / 2));
+                        const bottomPlayers = allPlayers.slice(Math.ceil(allPlayers.length / 2));
+                        renderPlayers('playersTop', topPlayers, msg.data.user_id);
+                        renderPlayers('playersBottom', bottomPlayers, msg.data.user_id);
                     }
                     break;
 
@@ -491,10 +488,7 @@
                     break;
 
                 case 'showdown_result':
-                    // 保存摊牌数据
-                    showdownCardsData = msg.data.showdown_cards;
-                    showdownWinnerName = msg.data.winner_name;
-                    showdownHandRank = msg.data.winner_hand_rank;
+                    showdownData = msg.data;
                     
                     showMessage(`获胜者: ${msg.data.winners.map(w => {
                         const player = gameState.players.find(p => p.user_id === w);
@@ -505,14 +499,13 @@
                         updatePlayerHands(msg.data.hands);
                     }
                     
-                    // 更新公共牌区域，显示胜者牌型
                     if (gameState && gameState.community_cards) {
                         updateCommunityCards(gameState.community_cards);
                     }
                     
                     setTimeout(() => {
                         showGameOverModal();
-                    }, 3000);
+                    }, 5000);
                     break;
 
                 case 'game_over':
@@ -569,10 +562,6 @@
             return names[phase] || phase;
         }
 
-        let showdownCardsData = null;
-        let showdownWinnerName = null;
-        let showdownHandRank = null;
-
         function updateCommunityCards(cards) {
             const communityDiv = document.getElementById('community');
             communityDiv.innerHTML = '';
@@ -586,18 +575,17 @@
                 communityDiv.appendChild(img);
             });
 
-            // 如果有摊牌数据，显示胜者牌型
-            if (showdownCardsData && showdownCardsData.length > 0) {
+            if (showdownData && showdownData.showdown_cards && showdownData.showdown_cards.length > 0) {
                 const winnerSection = document.createElement('div');
                 winnerSection.className = 'community-section';
                 winnerSection.style.marginTop = '10px';
                 
                 const winnerLabel = document.createElement('div');
                 winnerLabel.className = 'community-label';
-                if (showdownWinnerName && showdownHandRank) {
-                    winnerLabel.textContent = '胜者：' + showdownWinnerName + ' 牌型：' + showdownHandRank;
-                } else if (showdownHandRank) {
-                    winnerLabel.textContent = '牌型：' + showdownHandRank;
+                if (showdownData.winner_name && showdownData.winner_hand_rank) {
+                    winnerLabel.textContent = '胜者：' + showdownData.winner_name + ' 牌型：' + showdownData.winner_hand_rank;
+                } else if (showdownData.winner_hand_rank) {
+                    winnerLabel.textContent = '牌型：' + showdownData.winner_hand_rank;
                 } else {
                     winnerLabel.textContent = '胜者牌：';
                 }
@@ -605,7 +593,7 @@
                 
                 const winnerCardsRow = document.createElement('div');
                 winnerCardsRow.className = 'community-row';
-                showdownCardsData.forEach(card => {
+                showdownData.showdown_cards.forEach(card => {
                     const img = document.createElement('img');
                     img.src = '/' + card;
                     img.className = 'card';
@@ -644,6 +632,9 @@
                 }
                 if (player.is_big_blind) {
                     badges += '<div class="bb-badge">B</div>';
+                }
+                if (player.all_in) {
+                    badges += '<div style="position:absolute;top:-5px;left:50%;transform:translateX(-50%);background:#fd7e14;color:white;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:bold;z-index:10;">ALL-IN</div>';
                 }
 
                 div.innerHTML = `
@@ -884,10 +875,46 @@
         }
 
         function goBackToRoom() {
-            window.location.href = '/room/waiting?room_id=' + roomId;
+            fetch('/api/room/return', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ room_id: roomId })
+            }).then(r => r.json())
+              .then(data => {
+                  if (data.success) {
+                      window.location.href = '/room/waiting?room_id=' + roomId;
+                  } else {
+                      alert(data.message || '返回房间失败');
+                  }
+              })
+              .catch(err => {
+                  console.error('返回房间失败:', err);
+                  window.location.href = '/room/waiting?room_id=' + roomId;
+              });
         }
 
         function showGameOverModal() {
+            const messageEl = document.getElementById('gameOverMessage');
+            if (showdownData) {
+                let winnerNames = '';
+                if (showdownData.winners && showdownData.winners.length > 0) {
+                    if (gameState && gameState.players) {
+                        winnerNames = showdownData.winners.map(w => {
+                            const player = gameState.players.find(p => p.user_id === w);
+                            return player ? player.nickname : w;
+                        }).join(', ');
+                    }
+                }
+                const handRank = showdownData.winner_hand_rank || showdownData.best_rank || '';
+                const winAmount = showdownData.win_amount || showdownData.pot || 0;
+                messageEl.innerHTML = `
+                    <div style="margin-bottom: 10px;">胜者：<span style="color: #ffd700; font-weight: bold;">${winnerNames}</span></div>
+                    <div style="margin-bottom: 10px;">牌型：<span style="color: #ffd700; font-weight: bold;">${handRank}</span></div>
+                    <div>本局赢得：<span style="color: #28a745; font-weight: bold;">${winAmount}</span> 筹码</div>
+                `;
+            } else {
+                messageEl.textContent = '游戏结束！';
+            }
             document.getElementById('gameOverModal').style.display = 'flex';
         }
 

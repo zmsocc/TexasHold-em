@@ -610,6 +610,124 @@ func HandleLeaveRoom(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// HandleReturnToRoom 处理返回房间请求（游戏结束后返回）
+func HandleReturnToRoom(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "Method not allowed",
+		})
+		return
+	}
+
+	user := getCurrentUser(r)
+	if user == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "未登录",
+		})
+		return
+	}
+
+	var req struct {
+		RoomID string `json:"room_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "无效的请求参数",
+		})
+		return
+	}
+
+	room, err := GetRoomByID(req.RoomID)
+	if err != nil || room == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "房间不存在",
+		})
+		return
+	}
+
+	player, err := GetRoomPlayer(req.RoomID, user.ID)
+	if err != nil || player == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "您不在该房间中",
+		})
+		return
+	}
+
+	// 更新房间状态为等待中
+	UpdateRoomStatusToWaiting(req.RoomID)
+
+	// 重置非房主玩家的准备状态
+	ResetNonHostReadyStatus(req.RoomID, room.CreatorID)
+
+	// 停止多人游戏实例
+	multiplayerManager.RemoveGame(req.RoomID)
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "返回房间成功",
+	})
+}
+
+// HandleCheckReconnect 检测用户是否需要重连到房间
+func HandleCheckReconnect(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodGet {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "Method not allowed",
+		})
+		return
+	}
+
+	user := getCurrentUser(r)
+	if user == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "未登录",
+		})
+		return
+	}
+
+	room, err := GetUserCurrentRoom(user.ID)
+	if err != nil || room == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"in_room": false,
+		})
+		return
+	}
+
+	// 检查房间状态是否为游戏中
+	if room.Status == "gaming" {
+		// 游戏中，直接返回可以重连
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":      true,
+			"in_room":    true,
+			"room_id":    room.RoomID,
+			"room_code": room.RoomCode,
+			"is_gaming":  true,
+		})
+		return
+	}
+
+	// 房间在等待中，提示是否重连
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":      true,
+		"in_room":    true,
+		"room_id":    room.RoomID,
+		"room_code": room.RoomCode,
+		"is_gaming":  false,
+	})
+}
+
 // HandleSetReady 处理准备/取消准备请求
 func HandleSetReady(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")

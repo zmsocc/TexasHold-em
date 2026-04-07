@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
@@ -12,6 +13,13 @@ type PlayerAction struct {
 	UserID int
 	Action string
 	Amount int
+}
+
+// Pot 底池结构
+type Pot struct {
+	Amount  int   // 底池金额
+	UserIDs []int // 参与该底池的玩家ID
+	IsMain  bool  // 是否为主底池
 }
 
 // MultiplayerGame 多人游戏实例
@@ -35,6 +43,7 @@ type MultiplayerGame struct {
 	timer          *time.Timer
 	SmallBlind     int
 	BigBlind       int
+	Pots           []Pot // 主底池和边池
 }
 
 // MultiplayerPlayer 多人游戏玩家
@@ -382,8 +391,13 @@ func (mg *MultiplayerGame) postBlinds() {
 func (mg *MultiplayerGame) runBettingRound(phase string) {
 	fmt.Printf("runBettingRound: roomID=%s, phase=%s\n", mg.RoomID, phase)
 
-	lastRaisePos := -1
-	betCount := 0
+	var lastRaisePos int = -1
+	var startPos int
+
+	// 记录起始位置（用于检测全过牌）
+	mg.mu.RLock()
+	startPos = mg.CurrentPos
+	mg.mu.RUnlock()
 
 	for {
 		mg.mu.RLock()
@@ -404,9 +418,15 @@ func (mg *MultiplayerGame) runBettingRound(phase string) {
 			continue
 		}
 
-		// 检查是否完成一轮
-		if lastRaisePos == mg.CurrentPos && betCount > 0 {
-			fmt.Printf("runBettingRound: 一轮结束\n")
+		// 检查条件A：最后一位下注/加注的玩家的下注额被所有未弃牌的玩家跟注
+		if mg.canEndRound(lastRaisePos) {
+			fmt.Printf("runBettingRound: 满足条件A，轮次结束\n")
+			break
+		}
+
+		// 检查条件B：所有人都过牌
+		if lastRaisePos == -1 && mg.CurrentPos == startPos && mg.allPlayersCheckedSince(startPos) {
+			fmt.Printf("runBettingRound: 满足条件B（全过牌），轮次结束\n")
 			break
 		}
 
@@ -458,7 +478,6 @@ func (mg *MultiplayerGame) runBettingRound(phase string) {
 			mg.mu.RLock()
 			lastRaisePos = mg.CurrentPos
 			mg.mu.RUnlock()
-			betCount++
 		}
 
 		mg.moveToNextPlayer()
@@ -466,6 +485,47 @@ func (mg *MultiplayerGame) runBettingRound(phase string) {
 
 	// 重置下注
 	mg.resetBets()
+}
+
+// canEndRound 检查是否可以结束当前轮次（条件A）
+func (mg *MultiplayerGame) canEndRound(lastRaisePos int) bool {
+	mg.mu.RLock()
+	defer mg.mu.RUnlock()
+
+	if lastRaisePos == -1 {
+		return false
+	}
+
+	// 检查所有未弃牌玩家是否都跟注到当前下注额
+	for _, userID := range mg.PlayerOrder {
+		player := mg.Players[userID]
+		if player.Folded {
+			continue
+		}
+		if player.Bet != mg.CurrentBet && !player.AllIn {
+			return false
+		}
+	}
+	return true
+}
+
+// allPlayersCheckedSince 检查从startPos开始所有未弃牌玩家是否都过牌
+func (mg *MultiplayerGame) allPlayersCheckedSince(startPos int) bool {
+	mg.mu.RLock()
+	defer mg.mu.RUnlock()
+
+	// 遍历所有未弃牌玩家，检查是否都过牌
+	for _, userID := range mg.PlayerOrder {
+		player := mg.Players[userID]
+		if player.Folded || player.AllIn {
+			continue
+		}
+		// 如果有玩家下注了，就不是全过牌
+		if player.Bet > 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // waitForAction 等待玩家操作
@@ -653,6 +713,37 @@ func (mg *MultiplayerGame) runShowdown() {
 		}
 	}
 
+	// 排序函数：按面值从大到小排序
+	sortCardsDescByRank := func(cards []Card) []Card {
+		sorted := make([]Card, len(cards))
+		copy(sorted, cards)
+		// 定义面值排序：A > K > Q > J > 10 > 9 > 8 > 7 > 6 > 5 > 4 > 3 > 2
+		rankOrder := map[Rank]int{
+			Ace:   14,
+			King:  13,
+			Queen: 12,
+			Jack:  11,
+			Ten:   10,
+			Nine:  9,
+			Eight: 8,
+			Seven: 7,
+			Six:   6,
+			Five:  5,
+			Four:  4,
+			Three: 3,
+			Two:   2,
+		}
+		sort.Slice(sorted, func(i, j int) bool {
+			return rankOrder[sorted[i].Rank] > rankOrder[sorted[j].Rank]
+		})
+		return sorted
+	}
+
+	// 对所有玩家的最佳手牌进行排序
+	for i := range hands {
+		hands[i].bestCards = sortCardsDescByRank(hands[i].bestCards)
+	}
+
 	if len(activePlayers) == 0 {
 		return
 	}
@@ -669,8 +760,31 @@ func (mg *MultiplayerGame) runShowdown() {
 		winnerHand := EvaluateHand(allCards)
 		winnerBestCards := winnerHand.Cards
 
-		showdownCards := make([]string, len(winnerBestCards))
-		for i, card := range winnerBestCards {
+		// 对最佳5张牌进行排序
+		sortedWinnerCards := make([]Card, len(winnerBestCards))
+		copy(sortedWinnerCards, winnerBestCards)
+		// 定义面值排序：A > K > Q > J > 10 > 9 > 8 > 7 > 6 > 5 > 4 > 3 > 2
+		rankOrder := map[Rank]int{
+			Ace:   14,
+			King:  13,
+			Queen: 12,
+			Jack:  11,
+			Ten:   10,
+			Nine:  9,
+			Eight: 8,
+			Seven: 7,
+			Six:   6,
+			Five:  5,
+			Four:  4,
+			Three: 3,
+			Two:   2,
+		}
+		sort.Slice(sortedWinnerCards, func(i, j int) bool {
+			return rankOrder[sortedWinnerCards[i].Rank] > rankOrder[sortedWinnerCards[j].Rank]
+		})
+
+		showdownCards := make([]string, len(sortedWinnerCards))
+		for i, card := range sortedWinnerCards {
 			showdownCards[i] = card.ImageFileName()
 		}
 
@@ -707,6 +821,7 @@ func (mg *MultiplayerGame) runShowdown() {
 	// 分配底池
 	winAmount := mg.Pot / len(winners)
 	remainder := mg.Pot % len(winners)
+	eachWinAmount := make([]int, len(winners))
 
 	for i, userID := range winners {
 		amount := winAmount
@@ -714,12 +829,19 @@ func (mg *MultiplayerGame) runShowdown() {
 			amount++
 		}
 		mg.Players[userID].Chips += amount
+		eachWinAmount[i] = amount
 	}
 
 	// 获取第一个胜者的昵称
 	var winnerName string
 	if len(winners) > 0 {
 		winnerName = mg.Players[winners[0]].Nickname
+	}
+
+	// 获取赢得的筹码数量（取第一个胜者的数量）
+	totalWinAmount := 0
+	if len(eachWinAmount) > 0 {
+		totalWinAmount = eachWinAmount[0]
 	}
 
 	// 准备展示胜者最佳5张牌
@@ -739,6 +861,7 @@ func (mg *MultiplayerGame) runShowdown() {
 			"showdown_cards":   showdownCards,
 			"winner_name":      winnerName,
 			"winner_hand_rank": getHandRankName(bestHand.Rank),
+			"win_amount":       totalWinAmount,
 		},
 	})
 }

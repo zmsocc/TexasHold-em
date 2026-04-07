@@ -421,3 +421,15 @@ func TransferRoomHost(roomID string, newHostID int) error {
 	_, err := db.Exec("UPDATE rooms SET creator_id = ? WHERE room_id = ?", newHostID, roomID)
 	return err
 }
+
+// ResetNonHostReadyStatus 重置非房主玩家的准备状态
+func ResetNonHostReadyStatus(roomID string, creatorID int) error {
+	_, err := db.Exec("UPDATE room_players SET is_ready = FALSE WHERE room_id = ? AND user_id != ?", roomID, creatorID)
+	return err
+}
+
+// UpdateRoomStatusToWaiting 将房间状态更新为等待中
+func UpdateRoomStatusToWaiting(roomID string) error {
+	_, err := db.Exec("UPDATE rooms SET status = 'waiting' WHERE room_id = ?", roomID)
+	return err
+}
