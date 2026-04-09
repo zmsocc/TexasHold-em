@@ -227,19 +227,17 @@ func (mg *MultiplayerGame) run() {
 			break
 		}
 
-		// 检查是否所有未弃牌玩家都全下
-		if mg.allActivePlayersAllIn() {
-			fmt.Printf("run: 所有未弃牌玩家都全下，发完剩余公共牌并摊牌\n")
-			mg.dealRemainingCommunityCards()
-			mg.runShowdown()
-			mg.Status = "finished"
-			break
-		}
-
 		switch mg.Status {
 		case "preflop":
 			mg.runBettingRound("preflop")
 			if mg.isGameOver() {
+				// 所有未弃牌玩家都全下了，发完剩余公共牌并进入摊牌
+				if mg.allActivePlayersAllIn() {
+					fmt.Printf("run: preflop阶段所有玩家都全下，发完剩余公共牌并摊牌\n")
+					mg.dealRemainingCommunityCards()
+					mg.runShowdown()
+					mg.Status = "finished"
+				}
 				break
 			}
 			mg.dealFlop()
@@ -249,6 +247,13 @@ func (mg *MultiplayerGame) run() {
 		case "flop":
 			mg.runBettingRound("flop")
 			if mg.isGameOver() {
+				// 所有未弃牌玩家都全下了，发完剩余公共牌并进入摊牌
+				if mg.allActivePlayersAllIn() {
+					fmt.Printf("run: flop阶段所有玩家都全下，发完剩余公共牌并摊牌\n")
+					mg.dealRemainingCommunityCards()
+					mg.runShowdown()
+					mg.Status = "finished"
+				}
 				break
 			}
 			mg.dealTurn()
@@ -258,6 +263,13 @@ func (mg *MultiplayerGame) run() {
 		case "turn":
 			mg.runBettingRound("turn")
 			if mg.isGameOver() {
+				// 所有未弃牌玩家都全下了，发完剩余公共牌并进入摊牌
+				if mg.allActivePlayersAllIn() {
+					fmt.Printf("run: turn阶段所有玩家都全下，发完剩余公共牌并摊牌\n")
+					mg.dealRemainingCommunityCards()
+					mg.runShowdown()
+					mg.Status = "finished"
+				}
 				break
 			}
 			mg.dealRiver()
@@ -465,6 +477,11 @@ func (mg *MultiplayerGame) runBettingRound(phase string) {
 		// 跳过已弃牌或全下的玩家
 		if player.Folded || player.AllIn {
 			fmt.Printf("runBettingRound: 跳过玩家 user_id=%d (folded=%v, allin=%v)\n", currentUserID, player.Folded, player.AllIn)
+			// 检查是否所有未弃牌玩家都全下了
+			if mg.allActivePlayersAllIn() {
+				fmt.Printf("runBettingRound: 所有未弃牌玩家都全下，结束下注轮\n")
+				break
+			}
 			mg.moveToNextPlayer()
 			continue
 		}
