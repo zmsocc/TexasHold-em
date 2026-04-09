@@ -504,6 +504,8 @@
                         const bottomPlayers = allPlayers.slice(Math.ceil(allPlayers.length / 2));
                         renderPlayers('playersTop', topPlayers, msg.data.user_id);
                         renderPlayers('playersBottom', bottomPlayers, msg.data.user_id);
+                        // 更新操作按钮
+                        updateControls(gameState);
                     }
                     break;
 
