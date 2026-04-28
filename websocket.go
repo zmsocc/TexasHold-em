@@ -95,6 +95,20 @@ func (wm *WebSocketManager) Start() {
 				}
 			}
 			wm.mu.Unlock()
+			
+			// 检查用户是否还有其他连接
+			wm.mu.RLock()
+			hasOtherConnection := false
+			if _, ok := wm.clients[client.UserID]; ok {
+				hasOtherConnection = true
+			}
+			wm.mu.RUnlock()
+			
+			// 如果没有其他连接，更新用户在线状态为离线
+			if !hasOtherConnection {
+				UpdateUserOnlineStatus(client.UserID, false)
+			}
+			
 			client.Conn.Close()
 			fmt.Printf("WebSocket client unregistered: user_id=%d\n", client.UserID)
 
@@ -287,7 +301,7 @@ func (c *Client) handleMessage(msg map[string]interface{}) {
 	case "game_action":
 		// 游戏操作
 		fmt.Printf("handleMessage: game_action, user_id=%d, room_id=%s\n", c.UserID, c.RoomID)
-		
+
 		if c.RoomID == "" {
 			fmt.Printf("handleMessage: game_action failed, room_id is empty\n")
 			return
@@ -304,7 +318,7 @@ func (c *Client) handleMessage(msg map[string]interface{}) {
 		if amt, ok := msg["amount"].(float64); ok {
 			amount = int(amt)
 		}
-		
+
 		fmt.Printf("handleMessage: 提交操作 action=%s, amount=%d, user_id=%d\n", action, amount, c.UserID)
 
 		// 提交操作
@@ -333,6 +347,132 @@ func (c *Client) handleMessage(msg map[string]interface{}) {
 			game.Join(c.UserID, c)
 		} else {
 			fmt.Printf("handleMessage: game not found for room_id=%s\n", c.RoomID)
+		}
+
+	case "send_invite":
+		// 发送房间邀请给好友
+		if targetUserIDVal, ok := msg["target_user_id"]; ok {
+			targetUserID, _ := targetUserIDVal.(float64)
+			targetID := int(targetUserID)
+
+			// 获取当前用户信息
+			currentUser, err := GetUserByID(c.UserID)
+			if err != nil || currentUser == nil {
+				return
+			}
+
+			// 获取房间信息
+			var roomInfo *Room
+			if c.RoomID != "" {
+				roomInfo, _ = GetRoomByID(c.RoomID)
+			}
+
+			// 发送邀请
+			wsManager.SendToUser(targetID, "invite_request", map[string]interface{}{
+				"from_user_id":  c.UserID,
+				"from_nickname": currentUser.Nickname,
+				"from_avatar":   currentUser.AvatarURL,
+				"room_id":       c.RoomID,
+				"room_name":     roomInfo.RoomName,
+			})
+
+			// 回复发送者
+			c.Send <- mustJSON(WebSocketMessage{
+				Event: "invite_sent",
+				Data:  map[string]interface{}{"target_user_id": targetID},
+			})
+		}
+
+	case "accept_invite":
+		// 接受房间邀请
+		if roomIDVal, ok := msg["room_id"]; ok {
+			roomID, _ := roomIDVal.(string)
+			if inviterIDVal, ok := msg["inviter_user_id"]; ok {
+				inviterID, _ := inviterIDVal.(float64)
+
+				// 通知邀请者
+				wsManager.SendToUser(int(inviterID), "invite_accepted", map[string]interface{}{
+					"user_id": c.UserID,
+					"room_id": roomID,
+				})
+
+				// 发送房间信息给接受者
+				room, _ := GetRoomByID(roomID)
+				if room != nil {
+					c.Send <- mustJSON(WebSocketMessage{
+						Event: "invite_room_info",
+						Data:  room,
+					})
+				}
+			}
+		}
+
+	case "reject_invite":
+		// 拒绝房间邀请
+		if inviterIDVal, ok := msg["inviter_user_id"]; ok {
+			inviterID, _ := inviterIDVal.(float64)
+
+			// 获取当前用户信息
+			currentUser, _ := GetUserByID(c.UserID)
+
+			// 通知邀请者
+			wsManager.SendToUser(int(inviterID), "invite_rejected", map[string]interface{}{
+				"user_id":  c.UserID,
+				"nickname": currentUser.Nickname,
+			})
+		}
+
+	case "send_private_message":
+		// 发送私信
+		if toUserIDVal, ok := msg["to_user_id"]; ok {
+			toUserID, _ := toUserIDVal.(float64)
+			toID := int(toUserID)
+
+			if contentVal, ok := msg["content"]; ok {
+				content, _ := contentVal.(string)
+
+				// 检查是否是好友
+				isFriend, _ := IsFriend(c.UserID, toID)
+				if !isFriend {
+					c.Send <- mustJSON(WebSocketMessage{
+						Event: "message_error",
+						Data: map[string]string{
+							"error": "只能给好友发送消息",
+						},
+					})
+					return
+				}
+
+				// 获取发送者信息
+				fromUser, _ := GetUserByID(c.UserID)
+
+				// 保存消息
+				msg, err := SaveMessage(c.UserID, toID, content)
+				if err != nil {
+					c.Send <- mustJSON(WebSocketMessage{
+						Event: "message_error",
+						Data: map[string]string{
+							"error": "发送失败",
+						},
+					})
+					return
+				}
+
+				// 发送给对方
+				wsManager.SendToUser(toID, "private_message", map[string]interface{}{
+					"from_user_id":  c.UserID,
+					"from_nickname": fromUser.Nickname,
+					"from_avatar":   fromUser.AvatarURL,
+					"content":       content,
+					"created_at":    msg.CreatedAt,
+				})
+
+				// 发送给自己确认
+				c.Send <- mustJSON(WebSocketMessage{
+					Event: "message_sent",
+					Data:  msg,
+				})
+			}
 		}
 	}
 }
@@ -368,6 +508,9 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	// 注册客户端
 	wsManager.register <- client
+
+	// 更新用户在线状态
+	UpdateUserOnlineStatus(user.ID, true)
 
 	// 启动读写协程
 	go client.WritePump()

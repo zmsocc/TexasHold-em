@@ -144,6 +144,18 @@ func (g *WebGUIGame) Run() {
 	http.HandleFunc("/api/room/start", g.authMiddleware(HandleStartGame))
 	http.HandleFunc("/api/room/kick", g.authMiddleware(HandleKickPlayer))
 
+	// 好友相关API
+	http.HandleFunc("/api/friends/search", g.authMiddleware(HandleSearchFriends))
+	http.HandleFunc("/api/friends/request", g.authMiddleware(HandleSendFriendRequest))
+	http.HandleFunc("/api/friends/requests", g.authMiddleware(HandleGetFriendRequests))
+	http.HandleFunc("/api/friends/accept", g.authMiddleware(HandleAcceptFriendRequest))
+	http.HandleFunc("/api/friends/reject", g.authMiddleware(HandleRejectFriendRequest))
+	http.HandleFunc("/api/friends/list", g.authMiddleware(HandleGetFriends))
+	http.HandleFunc("/api/user/profile", g.authMiddleware(HandleGetUserProfile))
+	http.HandleFunc("/api/messages/conversation", g.authMiddleware(HandleGetConversation))
+	http.HandleFunc("/api/messages/send", g.authMiddleware(HandleSendMessage))
+	http.HandleFunc("/api/room/players_with_friends", g.authMiddleware(HandleGetRoomPlayersWithFriends))
+
 	// WebSocket端点
 	http.HandleFunc("/ws", g.authMiddleware(HandleWebSocket))
 
